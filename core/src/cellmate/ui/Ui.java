@@ -161,6 +161,8 @@ public final class Ui {
         int[] marks() { return null; }
         /** Always chosen (Detail, Pixel size): a tap on the bar sets the value instead of toggling. */
         boolean fixed() { return false; }
+        /** The longest value shown on the right of a plain slider (null for rows with a patch). */
+        String widestValue() { return null; }
         /** Accent: the marks themselves are tapped to pick, and the bar fills just past the label. */
         boolean picks() { return false; }
     }
@@ -193,15 +195,17 @@ public final class Ui {
 
     /** A setting that's always on: a dark grey bar that's only ever slid, with its value on the right. */
     private final class SliderRow extends Row {
-        final List<Part> parts; final java.util.function.Supplier<String> value;
-        SliderRow(String key, Part part, java.util.function.Supplier<String> value) {
-            super(key, part.name()); this.parts = Collections.singletonList(part); this.value = value;
+        final List<Part> parts; final java.util.function.Supplier<String> value; final String widest;
+        /** widest: the longest value text, so the bar's end doesn't move as the value changes. */
+        SliderRow(String key, Part part, java.util.function.Supplier<String> value, String widest) {
+            super(key, part.name()); this.parts = Collections.singletonList(part); this.value = value; this.widest = widest;
         }
         boolean box() { return true; }
         boolean chosen() { return true; }
         boolean fixed() { return true; }
         List<Part> parts() { return parts; }
         String value() { return value.get(); }
+        String widestValue() { return widest; }
     }
 
     private List<Row> rows() {
@@ -244,9 +248,9 @@ public final class Ui {
             boolean picks() { return true; }
         });
         r.add(new SliderRow("Detail", part("Detail", Settings.DETAIL.length, () -> Settings.nearest(Settings.DETAIL, s.cells),
-                v -> s.cells = Settings.DETAIL[v], v -> Settings.DETAIL[v] + " across"), () -> s.cells + " across"));
+                v -> s.cells = Settings.DETAIL[v], v -> Settings.DETAIL[v] + " across"), () -> s.cells + " across", "256 across"));
         r.add(new SliderRow("Pixel", part("Pixel size", Settings.PIXEL.length, () -> Settings.nearest(Settings.PIXEL, s.cellSize),
-                v -> s.cellSize = Settings.PIXEL[v], v -> Settings.PIXEL[v] + " px"), () -> s.cellSize + " px"));
+                v -> s.cellSize = Settings.PIXEL[v], v -> Settings.PIXEL[v] + " px"), () -> s.cellSize + " px", "40 px"));
         if (items != null && items.size() > 1)
             r.add(new ValueRow("Preview image", "Preview image", () -> (previewIndex + 1) + " / " + items.size(), d -> {
                 previewIndex = Math.floorMod(previewIndex + d, items.size()); schedulePreview();
@@ -702,7 +706,9 @@ public final class Ui {
         List<Part> parts = row.parts();
         int focusSec = clamp(section.getOrDefault(row.key, 0), 0, Math.max(0, parts.size() - 1));
         // the patch fills the bar's height and ends where the bar ends
-        int ph = rowH, pw = ph * 5 / 2, px = menuX + menuW - pw;
+        int ph = rowH, pw = ph * 5 / 2;
+        if (row.widestValue() != null) pw = Math.max(pw, g.textWidth(row.widestValue(), t) + 12 * k);   // room for the value
+        int px = menuX + menuW - pw;
         int labelX = menuX + 10 * k, ty = y + (rowH - t) / 2;
         boolean slider = chosen && avail && !parts.isEmpty() && !row.picks();   // a chosen row always shows its setting
 
@@ -710,7 +716,7 @@ public final class Ui {
             // Accent: the bar is the amount, filled in the picked colour; the least reaches just past the name
             int fillColor = Settings.SWATCHES[s.swatch];
             g.fill(menuX, y, menuW, rowH, CHOSEN);   // the empty part: the chosen grey, like the other sliders
-            int x1 = px - 12 * k, start = labelX + g.textWidth(row.label, t) + 14 * k, steps = Settings.RANGE_DEGREES.length;
+            int x1 = px, start = labelX + g.textWidth(row.label, t) + 14 * k, steps = Settings.RANGE_DEGREES.length;
             int end = start + s.accentRange * (x1 - start) / (steps - 1);
             List<int[]> fills = new ArrayList<>();
             magma(g, menuX, y, x1 - menuX, rowH, end - menuX, fillColor, null, s.swatch * 7 + s.accentRange * 13 + 3, fills);
@@ -721,7 +727,7 @@ public final class Ui {
             for (int[] f : fills) { g.clip(f[0], f[1], f[2], f[3]); g.text(row.label, labelX, ty, t, light(f[4]) ? BLACK : WHITE); g.unclip(); }
         } else if (slider) {
             g.fill(menuX, y, menuW, rowH, CHOSEN);                        // the empty part: the chosen grey
-            int x0 = menuX, x1 = px - 12 * k;
+            int x0 = menuX, x1 = px;   // the bar runs right up to the patch
             List<Integer> idx = new ArrayList<>();
             for (int i = 0; i < parts.size(); i++) idx.add(i);
             int n = idx.size(), gap = n > 1 ? 3 * k : 0, secW = n == 0 ? 0 : (x1 - x0 - gap * (n - 1)) / n;
