@@ -598,7 +598,7 @@ public final class Ui {
         hits.clear();
         g.fill(0, 0, w, h, BLACK);
 
-        g.text("CELLMATE", 14 * k, 8 * k, t, GREY);
+        title(g, 14 * k, 8 * k);
         String top = input == null ? "" : inputName + (items == null ? "" : "  " + items.size() + (items.size() == 1 ? " image" : " images"));
         top = fitText(g, top, w / 2, t);
         g.text(top, w - 14 * k - g.textWidth(top, t), 8 * k, t, GREY);
@@ -1083,6 +1083,16 @@ public final class Ui {
             spots[i] = new int[]{cx0, cy0, px + (c + 1) * pw / 4 - cx0, py + (r + 1) * ph / 2 - cy0};
         }
         return spots;
+    }
+
+    /** CELLMATE, each letter in the next colour of the accent palette. */
+    private void title(Surface g, int x, int y) {
+        String name = "CELLMATE";
+        for (int i = 0; i < name.length(); i++) {
+            String ch = name.substring(i, i + 1);
+            g.text(ch, x, y, t, Settings.SWATCHES[i % Settings.SWATCHES.length]);
+            x += g.textWidth(name.substring(0, i + 1), t) - g.textWidth(name.substring(0, i), t);   // keep the font's own spacing
+        }
     }
 
     private static double luma(int c) { return 0.299 * (c >> 16 & 255) + 0.587 * (c >> 8 & 255) + 0.114 * (c & 255); }
