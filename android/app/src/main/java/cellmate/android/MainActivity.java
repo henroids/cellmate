@@ -103,8 +103,12 @@ public final class MainActivity extends Activity implements Host {
             case KeyEvent.KEYCODE_DPAD_RIGHT: k = Ui.Key.RIGHT; break;
             case KeyEvent.KEYCODE_BUTTON_A: case KeyEvent.KEYCODE_DPAD_CENTER: case KeyEvent.KEYCODE_ENTER: case KeyEvent.KEYCODE_BUTTON_START: k = Ui.Key.A; break;
             case KeyEvent.KEYCODE_BUTTON_B: case KeyEvent.KEYCODE_BACK: k = Ui.Key.B; break;
-            case KeyEvent.KEYCODE_BUTTON_L1: case KeyEvent.KEYCODE_BUTTON_X: k = Ui.Key.PREV; break;
-            case KeyEvent.KEYCODE_BUTTON_R1: case KeyEvent.KEYCODE_BUTTON_Y: k = Ui.Key.NEXT; break;
+            case KeyEvent.KEYCODE_BUTTON_L1: k = Ui.Key.PREV; break;
+            case KeyEvent.KEYCODE_BUTTON_R1: k = Ui.Key.NEXT; break;
+            case KeyEvent.KEYCODE_BUTTON_L2: k = Ui.Key.PAGE_PREV; break;
+            case KeyEvent.KEYCODE_BUTTON_R2: k = Ui.Key.PAGE_NEXT; break;
+            case KeyEvent.KEYCODE_BUTTON_X: k = Ui.Key.SAVE; break;
+            case KeyEvent.KEYCODE_BUTTON_Y: k = Ui.Key.RESET; break;
             default: return super.onKeyDown(code, e);
         }
         ui.key(k);

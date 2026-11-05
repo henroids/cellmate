@@ -65,8 +65,12 @@ public final class Main implements Host {
                     case KeyEvent.VK_ENTER: case KeyEvent.VK_SPACE: ui.key(Ui.Key.A); break;
                     case KeyEvent.VK_ESCAPE: case KeyEvent.VK_BACK_SPACE: ui.key(Ui.Key.B); break;
                     case KeyEvent.VK_TAB: ui.key(e.isShiftDown() ? Ui.Key.PREV : Ui.Key.NEXT); break;
-                    case KeyEvent.VK_Q: case KeyEvent.VK_PAGE_UP: ui.key(Ui.Key.PREV); break;
-                    case KeyEvent.VK_E: case KeyEvent.VK_PAGE_DOWN: ui.key(Ui.Key.NEXT); break;
+                    case KeyEvent.VK_Q: ui.key(Ui.Key.PREV); break;
+                    case KeyEvent.VK_E: ui.key(Ui.Key.NEXT); break;
+                    case KeyEvent.VK_OPEN_BRACKET: case KeyEvent.VK_PAGE_UP: ui.key(Ui.Key.PAGE_PREV); break;
+                    case KeyEvent.VK_CLOSE_BRACKET: case KeyEvent.VK_PAGE_DOWN: ui.key(Ui.Key.PAGE_NEXT); break;
+                    case KeyEvent.VK_X: ui.key(Ui.Key.SAVE); break;
+                    case KeyEvent.VK_Y: ui.key(Ui.Key.RESET); break;
                     default: break;
                 }
             }

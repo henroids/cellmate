@@ -40,18 +40,12 @@ public final class Settings {
         /* BEADS   */ {new Knob("Outer circle", Kind.SLIDER, 4, RING_OUTER), new Knob("Inner circle", Kind.SLIDER, 3, RING_HOLE)},
         /* MELTED  */ {new Knob("Outer circle", Kind.SLIDER, 4, RING_OUTER), new Knob("Inner circle", Kind.SLIDER, 3, RING_HOLE),
                        new Knob("Rotation", Kind.DIAL, 0, 0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330),
-                       new Knob("Melt", Kind.BUTTON, 0, 1, 2, 3, 4, 5)},
+                       new Knob("Meltiness", Kind.DIAL, 0, 1, 2, 3, 4, 5)},
     };
 
-    /** 24 accent swatches: muted and pastel colours around the colour wheel. */
-    public static final int[] SWATCHES = new int[24];
-    static {
-        for (int i = 0; i < 24; i++) {
-            float h = i * 15f;
-            boolean pastel = i % 2 == 0;
-            SWATCHES[i] = Engine.fromHsv(h, pastel ? 0.34f : 0.46f, pastel ? 0.93f : 0.72f);
-        }
-    }
+    /** The 8 accent colours: the same bright family as the colour patch. */
+    public static final int[] SWATCHES = {0xffe0403a, 0xfff08a2c, 0xfff2cf3a, 0xff4cb84f, 0xff2ab3b0, 0xff3d7be0, 0xff9050d6, 0xffe85aa8};
+    public static final String[] SWATCH_NAMES = {"Red", "Orange", "Yellow", "Green", "Teal", "Blue", "Purple", "Pink"};
     public static final String[] RANGE_NAMES = {"Narrow", "Medium", "Wide"};
     public static final float[] RANGE_DEGREES = {14, 26, 42};
 
@@ -59,7 +53,7 @@ public final class Settings {
     public int greyTones = 3;       // 2 (black and white) .. 8
     public int colors = 12;         // 4..32, colour mode
     public boolean accent = false;  // greyscale only
-    public int swatch = 0;          // 0..23
+    public int swatch = 0;          // 0..7
     public int accentRange = 1;     // index into RANGE_NAMES
     public int cells = 96;          // pixels across the short side
     public int cellSize = 15;       // output pixels per cell

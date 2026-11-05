@@ -42,7 +42,13 @@ final class Java2dSurface implements Surface {
 
     @Override public void image(Object image, int x, int y) { g.drawImage((BufferedImage) image, x, y, null); }
 
-    @Override public void clip(int x, int y, int w, int h) { g.setClip(x, y, w, h); }
+    private final java.util.ArrayDeque<Shape> clips = new java.util.ArrayDeque<>();
 
-    @Override public void unclip() { g.setClip(null); }
+    @Override public void clip(int x, int y, int w, int h) {
+        Shape old = g.getClip();
+        clips.push(old == null ? new Rectangle(-100000, -100000, 200000, 200000) : old);
+        g.clipRect(x, y, w, h);   // inside any clip already set
+    }
+
+    @Override public void unclip() { if (!clips.isEmpty()) g.setClip(clips.pop()); else g.setClip(null); }
 }

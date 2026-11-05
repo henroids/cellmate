@@ -13,23 +13,26 @@ Every change is built automatically. Open **Releases → Cellmate (latest build)
 
 ## Using it
 
-- **Input folder** or **Input image**: what to convert. Folders include all subfolders.
-- **Output folder**: where the results go.
-- Styles: each has an O on the left; select it and a red X marks it as going to the output. Choose any number. Each style gets its own folder, named after the input plus the
-  style: converting `summer 96` with Rounded and Melted makes `summer 96 rounded` and
-  `summer 96 melted`, each with the same subfolders and the same file names (as .png).
+- **Input**: a folder (subfolders included) or one image. **Output**: where the results go.
+- **Styles**: highlight one and press A to choose it. A chosen style shows a white box: that's its
+  slider. It fills like a progress bar, split into a section per setting (L/R moves between
+  sections, left/right changes the value). Melted also has two dials: rotation and meltiness.
+  The small patch next to each style shows its pixels at the real size. X saves a style's
+  settings for next time, Y resets them to the defaults.
+- Each chosen style gets its own output folder, named after the input plus the style
+  (`summer 96 rounded`, `summer 96 melted`), with the same subfolders and file names (as .png).
   A single image goes into a folder named after the style (`melted/beach.png`).
-- **Mode**: Greyscale (choose 2 to 8 grey tones) or Color (choose how many colours).
-- **Accent color** (greyscale): one colour from the photo stays in colour, the rest goes grey.
-  Pick a preset, or tap/click the preview to take the colour from the photo.
-- **Detail**: how many pixels across the short side of the picture.
-- **Pixel size**: how big each pixel is in the saved image.
+- **Greyscale** (2 to 8 tones) or **Color** (4 to 32 colours): choose one. **Accent** (with
+  Greyscale): one of 8 colours stays in colour, the rest goes grey.
+- **Preview**: one style at a time; the arrows at the bottom (L2/R2, or [ and ]) page through the
+  chosen styles. The original is the small picture in the top-right corner.
+  **Preview image** picks which photo the preview uses; **Preview zoom** is Fit (whole picture)
+  or 1:1 (the middle at the real saved size). On the AYN Thor the preview is on the second screen.
+- **Detail**: pixels across the short side. **Pixel size**: how big each one is when saved.
 - **Existing files**: Skip (re-running on a growing album only does the new photos) or Replace.
-- The preview shows the highlighted style on the chosen preview image. On a device with a second
-  screen (AYN Thor) the preview moves to the other screen.
 
-Controls: arrows / D-pad to move, left/right to change, Enter / A to select, Esc / B to go back.
-Mouse and touch: tap a row to highlight it, tap again to use or change it.
+Keyboard: arrows, Enter = A, Esc = B, Tab or Q/E = L/R, [ ] = L2/R2, X = save, Y = reset.
+Mouse and touch: drag a slider or dial; tap a row to highlight it, tap again to choose it.
 
 ## Layout
 

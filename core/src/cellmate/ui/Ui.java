@@ -14,21 +14,20 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Cellmate's whole interface, drawn by hand in the Black Mesa Tennis start-screen style: black,
- * pixel font, an inverted white bar for the selected row, left/right to change values, A to
+ * pixel font, an inverted white bar for the highlighted row, left/right to change values, A to
  * select, B to go back. The desktop and Android apps only forward drawing and input.
  *
- * Styles, Greyscale, Color and Accent are "control rows": an O on the left (selectable; a red X
- * over it when chosen), the name, a few sliders (or a dial and a melt button), and a sample
- * patch on the right. L/R (Tab on a keyboard) moves between a row's controls.
+ * A chosen style shows a white-bordered box on the right of its row. The box is its slider: it
+ * fills like a pixelated progress bar, split into one section per setting (Melted adds two small
+ * dials, rotation and meltiness). L/R moves between sections. One preview shows a style at a
+ * time, with arrows at the bottom to page through the chosen styles and the original photo as a
+ * small picture in the top-right corner.
  */
 public final class Ui {
     public enum Pick { INPUT, INPUT_FOLDER, INPUT_IMAGE, OUTPUT }
-    public enum Key { UP, DOWN, LEFT, RIGHT, A, B, PREV, NEXT }
+    public enum Key { UP, DOWN, LEFT, RIGHT, A, B, PREV, NEXT, PAGE_PREV, PAGE_NEXT, SAVE, RESET }
 
     static final int BLACK = 0xff000000, WHITE = 0xfffafafa, GREY = 0xff9a9a9a, DIM = 0xff4a4a4a, ICON = 0xff7a7a7a;
-    /** The logo's colours: grey-white O, red X. */
-    static final int LOGO_WHITE = 0xffb3b3b3, LOGO_RED = 0xff9e2023;
-    static final int BUTTON_RED = 0xffe8322c, BUTTON_DARK = 0xff9c1712;
 
     private final Host host;
     private final Settings s = new Settings();
@@ -44,22 +43,16 @@ public final class Ui {
     private String[] popup;                // small chooser (Android input: folder or image)
     private int popupSel;
 
-    // ---- preview panes: "Before" plus one per chosen style
+    // ---- preview: one style at a time, plus the original as a picture-in-picture
     private final ExecutorService previewWorker = Executors.newSingleThreadExecutor(r -> daemon(r, "preview"));
     private final AtomicLong previewSeq = new AtomicLong();
-    private final Map<String, Pane> panes = new HashMap<>();
-    private List<String> paneOrder = new ArrayList<>();
+    private Style page = Style.BORDER;     // the style the preview shows
+    private Object previewImg, beforeImg;
+    private int previewImgW, previewImgH, beforeW, beforeH;
+    private Style previewImgStyle;
     private Picture picture;
     private String pictureKey;
-    private int areaW, areaH;              // preview area of the last layout
-    private boolean previewBusy;
-
-    private static final class Pane {
-        Object img; int w, h;                       // what's shown
-        int x, y, boxW, boxH;                       // where (last layout)
-        String info = "";
-        double fx0, fy0, fw = 1, fh = 1;            // Before pane: the part of the photo shown, as fractions
-    }
+    private int boxW, boxH, pipW, pipH;
 
     // ---- batch
     private enum Screen { MENU, RUNNING, DONE }
@@ -71,7 +64,7 @@ public final class Ui {
 
     // ---- menu
     private String selectedKey = "Input";
-    private final Map<String, Integer> focus = new HashMap<>();
+    private final Map<String, Integer> section = new HashMap<>();   // focused section of a slider box
     private int scroll;
     private boolean previewOnOtherScreen;
 
@@ -88,93 +81,65 @@ public final class Ui {
     private static Thread daemon(Runnable r, String name) { Thread th = new Thread(r, "cellmate-" + name); th.setDaemon(true); return th; }
     private static int clamp(int v, int lo, int hi) { return Math.max(lo, Math.min(hi, v)); }
 
-    // ================================================================== rows and controls
+    // ================================================================== rows
 
-    /** One adjustable thing in a control row. */
-    private abstract static class Control {
-        final String name;
-        Control(String name) { this.name = name; }
-        abstract boolean enabled();
-        /** Left/right. */
-        abstract void change(int d);
-        /** A button: by default A selects the row (its O / X). */
-        boolean press() { return false; }
-        String describe() { return name; }
+    /** One section of a slider box (or a dial next to it). */
+    private interface Part {
+        int steps();
+        int get();
+        void set(int v);
+        boolean dial();
+        String name();
     }
 
-    private final class Slider extends Control {
-        final int steps; final java.util.function.IntSupplier get; final java.util.function.IntConsumer set;
-        final java.util.function.BooleanSupplier on; final java.util.function.IntFunction<String> label;
-        Slider(String name, int steps, java.util.function.IntSupplier get, java.util.function.IntConsumer set,
-               java.util.function.BooleanSupplier on, java.util.function.IntFunction<String> label) {
-            super(name); this.steps = steps; this.get = get; this.set = set; this.on = on; this.label = label;
-        }
-        boolean enabled() { return on.getAsBoolean(); }
-        void change(int d) { set.accept(clamp(get.getAsInt() + d, 0, steps - 1)); changed(); }
-        void setIndex(int i) { int v = clamp(i, 0, steps - 1); if (v != get.getAsInt()) { set.accept(v); changed(); } }
-        String describe() { return name + "  " + label.apply(get.getAsInt()); }
+    private Part knobPart(Style st, int i) {
+        Knob kn = Settings.KNOBS[st.ordinal()][i];
+        return new Part() {
+            public int steps() { return kn.steps(); }
+            public int get() { return s.knob[st.ordinal()][i]; }
+            public void set(int v) { s.knob[st.ordinal()][i] = clamp(v, 0, kn.steps() - 1); changed(); }
+            public boolean dial() { return kn.kind == Kind.DIAL; }
+            public String name() { return SHORT.getOrDefault(kn.name, kn.name); }
+        };
     }
 
-    private final class KnobControl extends Control {
-        final Style st; final int i; final Knob knob;
-        KnobControl(Style st, int i) { super(Settings.KNOBS[st.ordinal()][i].name); this.st = st; this.i = i; this.knob = Settings.KNOBS[st.ordinal()][i]; }
-        int get() { return s.knob[st.ordinal()][i]; }
-        void set(int v) { s.knob[st.ordinal()][i] = clamp(v, 0, knob.steps() - 1); changed(); }
-        boolean enabled() { return true; }
-        void change(int d) {
-            if (knob.kind == Kind.DIAL) set(Math.floorMod(get() + d, knob.steps()));
-            else if (knob.kind == Kind.BUTTON) melt(d);
-            else set(get() + d);
-        }
-        boolean press() { if (knob.kind == Kind.BUTTON) { melt(1); return true; } return false; }
-        private void melt(int d) {
-            int next = get() + d;
-            if (next >= knob.steps()) { message = "That's as melted as it gets. Reset to start over."; return; }
-            if (next < 0) return;
-            set(next);
-            message = d > 0 ? "Melted a little more." : "";
-        }
-        String describe() {
-            int v = get();
-            if (knob.kind == Kind.DIAL) return name + "  " + (int) knob.values[v] + " deg";
-            if (knob.kind == Kind.BUTTON) return "Melt level  " + (v + 1) + " / " + knob.steps();
-            return name + "  " + (v + 1) + " / " + knob.steps();
-        }
+    /** Words shown inside the slider sections (short, so they fit). */
+    private static final Map<String, String> SHORT = new HashMap<>();
+    static {
+        String[] pairs = {"Border size", "Border", "Roundness", "Round", "Jitter", "Jitter", "Light squares", "Light",
+                "Dark squares", "Dark", "Thickness", "Thick", "Outer circle", "Outer", "Inner circle", "Inner",
+                "Rotation", "Turn", "Meltiness", "Melt"};
+        for (int i = 0; i < pairs.length; i += 2) SHORT.put(pairs[i], pairs[i + 1]);
     }
 
-    private final class Action extends Control {
-        final Runnable run; final java.util.function.BooleanSupplier on;
-        Action(String name, Runnable run, java.util.function.BooleanSupplier on) { super(name); this.run = run; this.on = on; }
-        boolean enabled() { return on.getAsBoolean(); }
-        void change(int d) { }
-        boolean press() { if (enabled()) run.run(); return true; }
+    private Part part(String name, int steps, java.util.function.IntSupplier get, java.util.function.IntConsumer set) {
+        return new Part() {
+            public int steps() { return steps; }
+            public int get() { return get.getAsInt(); }
+            public void set(int v) { set.accept(clamp(v, 0, steps - 1)); changed(); }
+            public boolean dial() { return false; }
+            public String name() { return name; }
+        };
     }
 
-    private final class Swatch extends Control {
-        Swatch() { super("Accent color"); }
-        boolean enabled() { return !s.color; }
-        void change(int d) { s.swatch = Math.floorMod(s.swatch + d, Settings.SWATCHES.length); changed(); }
-        String describe() { return "Accent color  " + (s.swatch + 1) + " / " + Settings.SWATCHES.length; }
-    }
-
-    /** A menu line. Control rows have a mark (O / X), controls and a patch; plain rows a value. */
+    /** A menu line: a plain row with a value, or a "box" row (styles, Greyscale, Color, Accent). */
     private abstract class Row {
         final String key, label;
         Row(String key, String label) { this.key = key; this.label = label; }
-        boolean controlRow() { return false; }
-        // plain rows
+        boolean box() { return false; }
         String value() { return ""; }
         boolean changeable() { return false; }
         void change(int d) { }
         void activate() { }
-        // control rows
-        boolean selectable() { return true; }
+        // box rows
+        boolean available() { return true; }
         boolean chosen() { return false; }
         void choose() { }
-        List<Control> controls() { return Collections.emptyList(); }
-        List<Control> actions() { return Collections.emptyList(); }   // second line, right side
+        List<Part> parts() { return Collections.emptyList(); }
         Object patch(int w, int h) { return null; }
-        void tapPatch(boolean right) { }
+        Style style() { return null; }
+        /** Box rows whose sections are colour cells (Accent). */
+        int[] cellColors() { return null; }
     }
 
     private final class ValueRow extends Row {
@@ -189,27 +154,18 @@ public final class Ui {
     }
 
     private final class StyleRow extends Row {
-        final Style st;
-        final List<Control> controls = new ArrayList<>(), actions = new ArrayList<>();
+        final Style st; final List<Part> parts = new ArrayList<>();
         StyleRow(Style st) {
             super("style:" + st.name(), st.label);
             this.st = st;
-            for (int i = 0; i < Settings.KNOBS[st.ordinal()].length; i++) controls.add(new KnobControl(st, i));
-            actions.add(new Action("Save", this::save, () -> true));
-            actions.add(new Action("Reset", this::reset, () -> true));
+            for (int i = 0; i < Settings.KNOBS[st.ordinal()].length; i++) parts.add(knobPart(st, i));
         }
-        boolean controlRow() { return true; }
+        boolean box() { return true; }
         boolean chosen() { return styleOn[st.ordinal()]; }
-        void choose() { styleOn[st.ordinal()] = !styleOn[st.ordinal()]; changed(); }
-        List<Control> controls() { return controls; }
-        List<Control> actions() { return actions; }
+        void choose() { styleOn[st.ordinal()] = !styleOn[st.ordinal()]; if (styleOn[st.ordinal()]) page = st; changed(); }
+        List<Part> parts() { return parts; }
         Object patch(int w, int h) { return stylePatch(st, w, h); }
-        void save() { saveKnobs(st); message = st.label + " settings saved. They'll be used next time."; }
-        void reset() {
-            s.knob[st.ordinal()] = Settings.defaults()[st.ordinal()];
-            message = st.label + " is back to its defaults. Save to keep them.";
-            changed();
-        }
+        Style style() { return st; }
     }
 
     private List<Row> rows() {
@@ -217,41 +173,35 @@ public final class Ui {
         r.add(new ValueRow("Input", "Input", () -> input != null ? inputName : "Choose", null, this::pickInput));
         r.add(new ValueRow("Output", "Output", () -> output != null ? outputName : "Choose", null, () -> host.pick(Pick.OUTPUT)));
         for (Style st : Style.values()) r.add(new StyleRow(st));
-
         r.add(new Row("Greyscale", "Greyscale") {
-            final List<Control> c = Collections.singletonList(new Slider("Grey tones", 7, () -> s.greyTones - 2, v -> s.greyTones = v + 2,
-                    () -> !s.color, v -> v == 0 ? "black and white" : (v + 2) + " tones"));
-            boolean controlRow() { return true; }
+            final List<Part> p = Collections.singletonList(part("Tones", 7, () -> s.greyTones - 2, v -> s.greyTones = v + 2));
+            boolean box() { return true; }
             boolean chosen() { return !s.color; }
             void choose() { if (s.color) { s.color = false; changed(); } }
-            List<Control> controls() { return c; }
+            List<Part> parts() { return p; }
             Object patch(int w, int h) { return tonesPatch(w, h); }
         });
         r.add(new Row("Color", "Color") {
-            final List<Control> c = Collections.singletonList(new Slider("Colors", 8, () -> (s.colors - 4) / 4, v -> s.colors = 4 + 4 * v,
-                    () -> s.color, v -> (4 + 4 * v) + " colors"));
-            boolean controlRow() { return true; }
+            final List<Part> p = Collections.singletonList(part("Colors", 8, () -> (s.colors - 4) / 4, v -> s.colors = 4 + 4 * v));
+            boolean box() { return true; }
             boolean chosen() { return s.color; }
             void choose() { if (!s.color) { s.color = true; changed(); } }
-            List<Control> controls() { return c; }
+            List<Part> parts() { return p; }
             Object patch(int w, int h) { return colorPatch(w, h); }
         });
         r.add(new Row("Accent", "Accent") {
-            final Swatch sw = new Swatch();
-            final List<Control> c = Arrays.asList(new Slider("Color range", 3, () -> s.accentRange, v -> s.accentRange = v,
-                    () -> !s.color, v -> Settings.RANGE_NAMES[v]), sw);
-            boolean controlRow() { return true; }
-            boolean selectable() { return !s.color; }
+            final List<Part> p = Collections.singletonList(part("Accent", Settings.SWATCHES.length, () -> s.swatch, v -> s.swatch = v));
+            boolean box() { return true; }
+            boolean available() { return !s.color; }
             boolean chosen() { return s.accent && !s.color; }
             void choose() {
-                if (s.color) { message = "The accent color works with Greyscale."; return; }
+                if (s.color) { message = "Accent works with Greyscale."; return; }
                 s.accent = !s.accent; changed();
             }
-            List<Control> controls() { return c; }
-            Object patch(int w, int h) { return swatchPatch(w, h); }
-            void tapPatch(boolean right) { sw.change(right ? 1 : -1); }
+            List<Part> parts() { return p; }
+            Object patch(int w, int h) { return accentPatch(w, h); }
+            int[] cellColors() { return Settings.SWATCHES; }
         });
-
         if (items != null && items.size() > 1)
             r.add(new ValueRow("Preview image", "Preview image", () -> (previewIndex + 1) + " / " + items.size(), d -> {
                 previewIndex = Math.floorMod(previewIndex + d, items.size()); schedulePreview();
@@ -263,17 +213,6 @@ public final class Ui {
         r.add(new ValueRow("Start", "Start", this::startSummary, null, this::start));
         r.add(new ValueRow("Quit", "Quit", () -> "", null, host::quit));
         return r;
-    }
-
-    /** Controls of a control row in focus order: the O/X mark (index 0), the controls, then actions. */
-    private int focusCount(Row row) { return 1 + row.controls().size() + row.actions().size(); }
-
-    private Control focusedControl(Row row) {
-        int f = focus.getOrDefault(row.key, 0);
-        if (f <= 0) return null;
-        if (f <= row.controls().size()) return row.controls().get(f - 1);
-        int a = f - 1 - row.controls().size();
-        return a < row.actions().size() ? row.actions().get(a) : null;
     }
 
     private String startSummary() {
@@ -290,9 +229,9 @@ public final class Ui {
     }
 
     private void select(List<Row> r, int i) {
-        String before = selectedKey;
-        selectedKey = r.get(i).key;
-        if (!before.equals(selectedKey) && (before.startsWith("style:") || selectedKey.startsWith("style:"))) host.repaint();
+        Row row = r.get(i);
+        selectedKey = row.key;
+        if (row.style() != null && row.style() != page) { page = row.style(); schedulePreview(); }
     }
 
     private void changed() { savePrefs(); schedulePreview(); host.repaint(); }
@@ -301,6 +240,23 @@ public final class Ui {
         if (host.canPickEither()) { host.pick(Pick.INPUT); return; }
         popup = new String[]{"A folder of images", "One image"};
         popupSel = 0;
+    }
+
+    /** Chosen styles in menu order (what the preview pages through). */
+    private List<Style> chosenStyles() {
+        List<Style> out = new ArrayList<>();
+        for (Style st : Style.values()) if (styleOn[st.ordinal()]) out.add(st);
+        return out;
+    }
+
+    private void turnPage(int d) {
+        List<Style> list = chosenStyles();
+        if (!list.contains(page)) list.add(page);
+        list.sort(Comparator.comparingInt(Enum::ordinal));
+        int i = list.indexOf(page);
+        page = list.get(Math.floorMod(i + d, list.size()));
+        schedulePreview();
+        host.repaint();
     }
 
     // ================================================================== keys
@@ -312,41 +268,44 @@ public final class Ui {
         List<Row> r = rows();
         int i = selectedIndex(r);
         Row row = r.get(i);
-        int f = focus.getOrDefault(row.key, 0);
+        int sec = section.getOrDefault(row.key, 0);
         switch (key) {
             case UP: select(r, (i - 1 + r.size()) % r.size()); break;
             case DOWN: select(r, (i + 1) % r.size()); break;
+            case PAGE_PREV: turnPage(-1); break;
+            case PAGE_NEXT: turnPage(1); break;
             case PREV: case NEXT:
-                if (row.controlRow()) focus.put(row.key, Math.floorMod(f + (key == Key.NEXT ? 1 : -1), focusCount(row)));
+                if (row.box() && row.parts().size() > 1) section.put(row.key, Math.floorMod(sec + (key == Key.NEXT ? 1 : -1), row.parts().size()));
                 break;
             case LEFT: case RIGHT: {
                 int d = key == Key.RIGHT ? 1 : -1;
-                if (!row.controlRow()) { row.change(d); break; }
-                Control c = focusedControl(row);
-                if (c == null) { if (row.selectable()) row.choose(); else row.choose(); }
-                else if (c.enabled()) c.change(d);
-                else message = disabledReason(row);
+                if (!row.box()) { row.change(d); break; }
+                if (!row.available()) { message = "Accent works with Greyscale."; break; }
+                if (!row.chosen()) { message = "Press A to choose " + row.label + " first."; break; }
+                Part p = row.parts().get(Math.min(sec, row.parts().size() - 1));
+                p.set(p.dial() && p.steps() > 6 ? Math.floorMod(p.get() + d, p.steps()) : p.get() + d);
                 break;
             }
-            case A: {
-                if (!row.controlRow()) { row.activate(); break; }
-                Control c = focusedControl(row);
-                if (c != null && c.press()) break;
-                row.choose();
-                break;
-            }
-            case B:
-                if (row.controlRow() && f != 0) focus.put(row.key, 0);
-                else if (i != 0) select(r, 0);
-                break;
+            case A: if (row.box()) row.choose(); else row.activate(); break;
+            case B: if (i != 0) select(r, 0); break;
+            case SAVE: if (row.style() != null) save(row.style()); break;
+            case RESET: if (row.style() != null) reset(row.style()); break;
         }
         host.repaint();
     }
 
-    private String disabledReason(Row row) {
-        if (row.key.equals("Greyscale")) return "Select Greyscale to change the grey tones.";
-        if (row.key.equals("Color")) return "Select Color to change the number of colors.";
-        return "The accent color works with Greyscale.";
+    private void save(Style st) {
+        StringBuilder b = new StringBuilder();
+        for (int v : s.knob[st.ordinal()]) b.append(v).append(',');
+        savedKnobs.put(st.name(), b.toString());
+        savePrefs();
+        message = st.label + " saved for next time.";
+    }
+
+    private void reset(Style st) {
+        s.knob[st.ordinal()] = Settings.defaults()[st.ordinal()];
+        message = st.label + " is back to its defaults.";
+        changed();
     }
 
     private void popupKey(Key key) {
@@ -359,44 +318,36 @@ public final class Ui {
         }
     }
 
-    private void popupChoose(int i) {
-        popup = null;
-        host.pick(i == 0 ? Pick.INPUT_FOLDER : Pick.INPUT_IMAGE);
-    }
+    private void popupChoose(int i) { popup = null; host.pick(i == 0 ? Pick.INPUT_FOLDER : Pick.INPUT_IMAGE); }
 
     // ================================================================== pointer (mouse and touch)
 
     /** Something drawn last frame that can be tapped or dragged. */
     private static final class Hit {
-        final int x, y, w, h; final String row; final Object what; final int focusIndex;
-        Hit(int x, int y, int w, int h, String row, Object what, int focusIndex) {
-            this.x = x; this.y = y; this.w = w; this.h = h; this.row = row; this.what = what; this.focusIndex = focusIndex;
-        }
+        final int x, y, w, h; final String row; final Object what; final int index;
+        Hit(int x, int y, int w, int h, String row, Object what, int index) { this.x = x; this.y = y; this.w = w; this.h = h; this.row = row; this.what = what; this.index = index; }
         boolean contains(int px, int py) { return px >= x && py >= y && px < x + w && py < y + h; }
     }
 
-    private static final Object MARK = new Object(), PATCH = new Object(), ROW = new Object();
+    private static final Object ROW = new Object(), PAGE_LEFT = new Object(), PAGE_RIGHT = new Object(), HELP = new Object();
     private Hit down;
-    private int downX, downY, lastY;
-    private boolean dragging;
+    private int downY, lastY;
+    private boolean dragging, sliding;
 
     public void pointerDown(int x, int y) {
-        downX = x; downY = lastY = y; dragging = false; down = null;
+        downY = lastY = y; dragging = false; sliding = false; down = null;
         if (screen != Screen.MENU || popup != null) return;
         for (int i = hits.size() - 1; i >= 0; i--) if (hits.get(i).contains(x, y)) { down = hits.get(i); break; }
-        if (down != null && down.what instanceof Slider || down != null && down.what instanceof KnobControl && ((KnobControl) down.what).knob.kind != Kind.BUTTON) {
-            dragTo(down, x, y);
-            dragging = true;
-        }
+        if (down != null && down.what instanceof Part) { slide(down, x, y); sliding = true; }
     }
 
     public void pointerMove(int x, int y) {
         if (screen != Screen.MENU || popup != null) return;
-        if (dragging && down != null && (down.what instanceof Slider || down.what instanceof KnobControl)) { dragTo(down, x, y); return; }
+        if (sliding) { slide(down, x, y); return; }
         if (!dragging && Math.abs(y - downY) > rowH / 2) dragging = true;
         if (dragging && rowH > 0) {
-            int rowsMoved = (lastY - y) / rowH;
-            if (rowsMoved != 0) { scrollBy(rowsMoved); lastY -= rowsMoved * rowH; }
+            int moved = (lastY - y) / rowH;
+            if (moved != 0) { scrollBy(moved); lastY -= moved * rowH; }
         }
     }
 
@@ -404,9 +355,11 @@ public final class Ui {
         if (screen == Screen.RUNNING) { cancel.set(true); message = "Cancelling..."; host.repaint(); return; }
         if (screen == Screen.DONE) { screen = Screen.MENU; host.repaint(); return; }
         if (popup != null) { tapPopup(x, y); host.repaint(); return; }
-        if (dragging) { dragging = false; host.repaint(); return; }
-        if (!previewOnOtherScreen && x >= previewX && y >= previewY && x < previewX + previewW && y < previewY + previewH) { tapPane(x, y); return; }
+        if (sliding || dragging) { sliding = dragging = false; host.repaint(); return; }
         if (down == null) return;
+        if (down.what == PAGE_LEFT) { turnPage(-1); return; }
+        if (down.what == PAGE_RIGHT) { turnPage(1); return; }
+        if (down.what == HELP) { key((Key) helpKeys.get(down.index)); return; }
         List<Row> r = rows();
         int idx = -1;
         for (int i = 0; i < r.size(); i++) if (r.get(i).key.equals(down.row)) idx = i;
@@ -414,21 +367,9 @@ public final class Ui {
         Row row = r.get(idx);
         boolean wasSelected = row.key.equals(selectedKey);
         select(r, idx);
-        if (down.what == MARK) { focus.put(row.key, 0); row.choose(); }
-        else if (down.what == PATCH) {
-            if (row.key.equals("Accent")) {
-                for (int i = 0; i < row.controls().size(); i++) if (row.controls().get(i) instanceof Swatch) focus.put(row.key, i + 1);
-                if (row.selectable()) row.tapPatch(x >= down.x + down.w / 2); else message = disabledReason(row);
-            }
-        }
-        else if (down.what instanceof Control) {
-            Control c = (Control) down.what;
-            focus.put(row.key, down.focusIndex);
-            if (!c.enabled()) message = disabledReason(row);
-            else if (!c.press() && c instanceof Swatch) c.change(x >= down.x + down.w / 2 ? 1 : -1);
-        } else if (wasSelected && !row.controlRow()) {
-            // second tap on a plain row: left part of the value lowers, anything else raises / opens
-            if (row.changeable() && x >= valueLeft && x < valueMid) row.change(-1);
+        if (wasSelected) {
+            if (row.box()) row.choose();
+            else if (row.changeable() && x >= valueLeft && x < valueMid) row.change(-1);
             else if (row.changeable()) row.change(1);
             else row.activate();
         }
@@ -438,25 +379,22 @@ public final class Ui {
     /** Old single-tap entry point (tests). */
     public void tap(int x, int y) { pointerDown(x, y); pointerUp(x, y); }
 
-    private void dragTo(Hit h, int x, int y) {
-        Object w = h.what;
-        if (w instanceof Slider) {
-            Slider sl = (Slider) w;
-            if (!sl.enabled()) return;
-            sl.setIndex((int) Math.round((x - h.x) / (double) Math.max(1, h.w) * (sl.steps - 1)));
-        } else if (w instanceof KnobControl) {
-            KnobControl kc = (KnobControl) w;
-            if (kc.knob.kind == Kind.SLIDER) {
-                int v = (int) Math.round((x - h.x) / (double) Math.max(1, h.w) * (kc.knob.steps() - 1));
-                if (v != kc.get()) kc.set(v);
-            } else if (kc.knob.kind == Kind.DIAL) {
-                double a = Math.toDegrees(Math.atan2(y - (h.y + h.h / 2.0), x - (h.x + h.w / 2.0))) + 90;   // 0 = up
-                int v = Math.floorMod((int) Math.round(a / 30.0), kc.knob.steps());
-                if (v != kc.get()) kc.set(v);
-            }
+    private void slide(Hit h, int x, int y) {
+        Part p = (Part) h.what;
+        List<Row> r = rows();
+        for (int i = 0; i < r.size(); i++) if (r.get(i).key.equals(h.row)) select(r, i);
+        section.put(h.row, h.index);
+        if (p.dial()) {
+            double a = Math.toDegrees(Math.atan2(y - (h.y + h.h / 2.0), x - (h.x + h.w / 2.0))) + 90;   // 0 = up
+            a = Math.floorMod((int) Math.round(a), 360);
+            int v = p.steps() > 6 ? (int) Math.round(a / (360.0 / p.steps())) % p.steps()
+                    : clamp((int) Math.round(Math.min(a, 270) / 270.0 * (p.steps() - 1)), 0, p.steps() - 1);
+            if (v != p.get()) p.set(v);
+        } else {
+            int v = clamp((x - h.x) * p.steps() / Math.max(1, h.w), 0, p.steps() - 1);
+            if (v != p.get()) p.set(v);
         }
-        focus.put(h.row, h.focusIndex);
-        selectedKey = h.row;
+        host.repaint();
     }
 
     private int popupX, popupY, popupW, popupRowH;
@@ -468,33 +406,11 @@ public final class Ui {
     }
 
     /** Mouse wheel or swipe, in rows (positive = down). */
-    public void scrollBy(int rowsDelta) {
-        scroll = Math.max(0, scroll + rowsDelta);
-        host.repaint();
-    }
+    public void scrollBy(int rowsDelta) { scroll = Math.max(0, scroll + rowsDelta); host.repaint(); }
 
-    /** A tap on the second screen's previews. */
-    public void tapPreviewScreen(int x, int y) { tapPane(x, y); }
-
-    /** Tapping the Before pane picks the nearest accent swatch from the photo. */
-    private void tapPane(int x, int y) {
-        Pane before = panes.get("before");
-        if (before == null || before.img == null || picture == null) return;
-        int ix = before.x + (before.boxW - before.w) / 2, iy = before.y + (before.boxH - before.h) / 2;
-        if (x < ix || y < iy || x >= ix + before.w || y >= iy + before.h) return;
-        if (s.color) { message = "The accent color works with Greyscale."; host.repaint(); return; }
-        double fx = before.fx0 + (x - ix) / (double) before.w * before.fw, fy = before.fy0 + (y - iy) / (double) before.h * before.fh;
-        int c = Engine.sampleColor(picture, fx, fy);
-        float[] hsv = Engine.hsv(c);
-        int best = 0; float bd = Float.MAX_VALUE;
-        for (int i = 0; i < Settings.SWATCHES.length; i++) {
-            float[] o = Engine.hsv(Settings.SWATCHES[i]);
-            float dh = Math.abs(o[0] - hsv[0]); dh = Math.min(dh, 360 - dh);
-            if (dh < bd) { bd = dh; best = i; }
-        }
-        s.swatch = best; s.accent = true;
-        message = hsv[1] < 0.15f ? "That spot is nearly grey; picked the closest color anyway." : "Accent color picked from the photo.";
-        changed();
+    /** A tap on the second screen's preview: the arrows page through the styles. */
+    public void tapPreviewScreen(int x, int y) {
+        for (Hit h : hits) if (h.contains(x, y) && (h.what == PAGE_LEFT || h.what == PAGE_RIGHT)) { turnPage(h.what == PAGE_LEFT ? -1 : 1); return; }
     }
 
     // ================================================================== picking
@@ -505,8 +421,7 @@ public final class Ui {
             output = place; outputName = name;
         } else {
             input = place; inputName = name; inputFolder = kind == Pick.INPUT_FOLDER;
-            items = null; previewIndex = 0; picture = null; pictureKey = null;
-            panes.clear();
+            items = null; previewIndex = 0; picture = null; pictureKey = null; previewImg = beforeImg = null;
             scan();
         }
         message = "";
@@ -532,103 +447,40 @@ public final class Ui {
 
     private void say(String text) { host.runOnUi(() -> { message = text; host.repaint(); }); }
 
-    // ================================================================== preview panes
+    // ================================================================== preview
 
     /** Tells the UI that the preview is shown on a second screen (the Thor's lower display). */
     public void setPreviewOnOtherScreen(boolean other) { previewOnOtherScreen = other; host.repaint(); }
 
-    /** Before, then each chosen style; if none is chosen, the highlighted style (or Border). */
-    private List<String> wantedPanes() {
-        List<String> out = new ArrayList<>();
-        out.add("before");
-        for (Style st : Style.values()) if (styleOn[st.ordinal()]) out.add(st.name());
-        if (out.size() == 1) out.add(selectedKey.startsWith("style:") ? selectedKey.substring(6) : Style.BORDER.name());
-        return out;
-    }
-
-    /** Lays the panes out in a grid that keeps them as big as possible. */
-    private void layoutPanes(int x, int y, int w, int h) {
-        List<String> want = wantedPanes();
-        if (!want.equals(paneOrder)) { paneOrder = want; }
-        int n = want.size();
-        double aspect = picture != null ? picture.width / (double) picture.height : 1.0;
-        int bestCols = 1; double bestScale = 0;
-        int head = t + 6 * k, gap = 10 * k;
-        for (int cols = 1; cols <= n; cols++) {
-            int rowsN = (n + cols - 1) / cols;
-            double cw = (w - gap * (cols - 1)) / (double) cols, ch = (h - gap * (rowsN - 1)) / (double) rowsN - head;
-            double scale = Math.min(cw / aspect, ch);
-            if (scale > bestScale) { bestScale = scale; bestCols = cols; }
-        }
-        int cols = bestCols, rowsN = (n + cols - 1) / cols;
-        int cw = (w - gap * (cols - 1)) / cols, ch = (h - gap * (rowsN - 1)) / rowsN;
-        boolean resized = false;
-        for (int i = 0; i < n; i++) {
-            Pane p = panes.computeIfAbsent(want.get(i), kk -> new Pane());
-            int px = x + (i % cols) * (cw + gap), py = y + (i / cols) * (ch + gap);
-            int bw = cw, bh = ch - head;
-            if (bw != p.boxW || bh != p.boxH) resized = true;
-            p.x = px; p.y = py + head; p.boxW = bw; p.boxH = bh;
-        }
-        if (resized || w != areaW || h != areaH) { areaW = w; areaH = h; schedulePreview(); }
-    }
-
     private void schedulePreview() {
-        if (input == null || items == null || items.isEmpty() || paneOrder.isEmpty()) return;
+        if (input == null || items == null || items.isEmpty() || boxW <= 0) return;
         final long seq = previewSeq.incrementAndGet();
         final Settings set = s.copy();
+        final Style style = page;
         final String rel = items.get(Math.min(previewIndex, items.size() - 1));
         final Object in = input; final boolean folder = inputFolder;
-        final boolean z = zoom;
-        final List<String> order = new ArrayList<>(paneOrder);
-        final Map<String, int[]> boxes = new HashMap<>();
-        for (String id : order) { Pane p = panes.get(id); if (p != null) boxes.put(id, new int[]{p.boxW, p.boxH}); }
-        previewBusy = true;
+        final int bw = boxW, bh = boxH, pw = pipW, ph = pipH; final boolean z = zoom;
         previewWorker.execute(() -> {
             if (seq != previewSeq.get()) return;
             try {
                 String key = (folder ? "d:" : "f:") + in + "|" + rel;
                 Picture p = picture;
-                if (p == null || !key.equals(pictureKey)) { p = host.decode(in, folder, rel); picture = p; pictureKey = key; }
-                Grid g = null;
-                for (String id : order) {
+                boolean newPicture = p == null || !key.equals(pictureKey);
+                if (newPicture) { p = host.decode(in, folder, rel); picture = p; pictureKey = key; }
+                Engine.Image photo = Engine.fit(new Engine.Image(p.width, p.height, p.argb), pw, ph);
+                Object before = host.makeImage(photo.argb, photo.width, photo.height);
+                if (seq != previewSeq.get()) return;
+                Engine.Image full = Engine.draw(Engine.grid(p, set), style, set.cellSize, set);
+                Engine.Image shown = z ? Engine.crop(full, bw, bh, 0.5, 0.5) : Engine.fit(full, bw, bh);
+                Object img = host.makeImage(shown.argb, shown.width, shown.height);
+                host.runOnUi(() -> {
                     if (seq != previewSeq.get()) return;
-                    int[] box = boxes.get(id);
-                    if (box == null || box[0] <= 0 || box[1] <= 0) continue;
-                    Engine.Image shown; String info;
-                    double[] region = {0, 0, 1, 1};
-                    if (id.equals("before")) {
-                        Engine.Image photo = new Engine.Image(p.width, p.height, p.argb);
-                        if (z) {   // the same middle part the 1:1 outputs show
-                            int[] size = Engine.gridSize(p.width, p.height, set.cells);
-                            double scale = p.width / (double) (size[0] * set.cellSize);
-                            Engine.Image mid = Engine.crop(photo, (int) Math.ceil(box[0] * scale), (int) Math.ceil(box[1] * scale), 0.5, 0.5);
-                            region = new double[]{(p.width - mid.width) / 2.0 / p.width, (p.height - mid.height) / 2.0 / p.height,
-                                    mid.width / (double) p.width, mid.height / (double) p.height};
-                            shown = Engine.fit(mid, box[0], box[1]);
-                        } else shown = Engine.fit(photo, box[0], box[1]);
-                        info = "Before";
-                    } else {
-                        if (g == null) g = Engine.grid(p, set);
-                        Style st = Style.valueOf(id);
-                        Engine.Image full = Engine.draw(g, st, set.cellSize, set);
-                        shown = z ? Engine.crop(full, box[0], box[1], 0.5, 0.5) : Engine.fit(full, box[0], box[1]);
-                        info = st.label + (styleOn[st.ordinal()] ? "" : "  (not chosen)");
-                    }
-                    Object img = host.makeImage(shown.argb, shown.width, shown.height);
-                    final double[] fr = region;
-                    final Engine.Image fs = shown; final String fi = info; final boolean last = id.equals(order.get(order.size() - 1));
-                    host.runOnUi(() -> {
-                        if (seq != previewSeq.get()) return;
-                        Pane pane = panes.computeIfAbsent(id, kk -> new Pane());
-                        pane.img = img; pane.w = fs.width; pane.h = fs.height; pane.info = fi;
-                        pane.fx0 = fr[0]; pane.fy0 = fr[1]; pane.fw = fr[2]; pane.fh = fr[3];
-                        if (last) previewBusy = false;
-                        host.repaint();
-                    });
-                }
+                    previewImg = img; previewImgW = shown.width; previewImgH = shown.height; previewImgStyle = style;
+                    beforeImg = before; beforeW = photo.width; beforeH = photo.height;
+                    host.repaint();
+                });
             } catch (Throwable e) {
-                host.runOnUi(() -> { if (seq == previewSeq.get()) { previewBusy = false; message = "Preview failed: " + rel; host.repaint(); } });
+                host.runOnUi(() -> { if (seq == previewSeq.get()) { message = "Preview failed: " + rel; host.repaint(); } });
             }
         });
     }
@@ -636,11 +488,10 @@ public final class Ui {
     // ================================================================== batch
 
     private void start() {
-        List<Style> chosen = new ArrayList<>();
-        for (Style st : Style.values()) if (styleOn[st.ordinal()]) chosen.add(st);
+        List<Style> chosen = chosenStyles();
         if (input == null) { message = "Choose an input first."; return; }
         if (output == null) { message = "Choose an output folder first."; return; }
-        if (chosen.isEmpty()) { message = "Select at least one style."; return; }
+        if (chosen.isEmpty()) { message = "Choose at least one style."; return; }
         if (items == null) { message = "Still looking for images..."; return; }
         if (items.isEmpty()) { message = "No images to convert."; return; }
         if (inputFolder && host.isInside(output, input)) { message = "Pick an output folder outside the input folder."; return; }
@@ -707,78 +558,76 @@ public final class Ui {
 
         if (screen != Screen.MENU) {
             drawJob(g, w, midY, midH);
-            drawHelp(g, w, h, screen == Screen.RUNNING ? new String[]{"B", "Cancel"} : new String[]{"A", "OK"});
+            drawHelp(g, w, h, screen == Screen.RUNNING ? new Object[]{"B", "Cancel", Key.B} : new Object[]{"A", "OK", Key.A});
             return;
         }
 
-        boolean landscape = w >= h;
         if (previewOnOtherScreen) {
             menuX = w / 8; menuY = midY; menuW = w - w / 4; menuH = midH;
             previewW = previewH = 0;
-        } else if (landscape) {
-            menuX = 0; menuY = midY; menuW = (int) (w * 0.5); menuH = midH;
+        } else if (w >= h) {
+            menuX = 0; menuY = midY; menuW = (int) (w * 0.46); menuH = midH;
             previewX = menuW + 16 * k; previewY = midY; previewW = w - previewX - 14 * k; previewH = midH;
         } else {
-            previewX = 14 * k; previewY = midY; previewW = w - 28 * k; previewH = (int) (midH * 0.40);
+            previewX = 14 * k; previewY = midY; previewW = w - 28 * k; previewH = (int) (midH * 0.42);
             menuX = 0; menuY = previewY + previewH + 10 * k; menuW = w; menuH = midH - previewH - 10 * k;
         }
         drawMenu(g);
-        if (!previewOnOtherScreen) drawPanes(g, previewX, previewY, previewW, previewH);
+        if (!previewOnOtherScreen) drawPreview(g, previewX, previewY, previewW, previewH);
 
         g.text(fitText(g, message, w / 2, t), 14 * k, h - bottomH + 6 * k, t, GREY);
         List<Row> r = rows();
-        boolean controls = r.get(selectedIndex(r)).controlRow();
-        drawHelp(g, w, h, controls ? new String[]{"A", "Select", "<>", "Change", "LR", "Next"} : new String[]{"A", "Select", "B", "Back", "<>", "Change"});
+        Row row = r.get(selectedIndex(r));
+        List<Object> help = new ArrayList<>(Arrays.asList("A", row.box() ? (row.chosen() && row.style() != null ? "Remove" : "Choose") : "Select", Key.A));
+        if (row.box() && row.parts().size() > 1 && row.chosen()) help.addAll(Arrays.asList("LR", "Section", Key.NEXT));
+        if (row.style() != null && row.chosen()) help.addAll(Arrays.asList("X", "Save", Key.SAVE, "Y", "Reset", Key.RESET));
+        else help.addAll(Arrays.asList("B", "Back", Key.B));
+        drawHelp(g, w, h, help.toArray());
         if (popup != null) drawPopup(g, w, h);
     }
 
-    /** Draws only the previews, for a second screen. */
+    /** Draws only the preview, for a second screen. */
     public void drawPreviewScreen(Surface g, int w, int h) {
-        int kk = Math.max(1, Math.round(h / 540f));
         int saveK = k, saveT = t;
-        k = kk; t = 20 * kk;
+        k = Math.max(1, Math.round(h / 540f)); t = 20 * k;
         g.fill(0, 0, w, h, BLACK);
-        drawPanes(g, 14 * kk, 10 * kk, w - 28 * kk, h - 20 * kk);
+        hits.removeIf(x -> x.what == PAGE_LEFT || x.what == PAGE_RIGHT);
+        drawPreview(g, 14 * k, 10 * k, w - 28 * k, h - 20 * k);
         k = saveK; t = saveT;
     }
 
     private void drawMenu(Surface g) {
         List<Row> r = rows();
         int sel = selectedIndex(r);
-        // row heights: the highlighted control row gets a second line
-        int[] hgt = new int[r.size()];
-        for (int i = 0; i < r.size(); i++) hgt[i] = rowH + (i == sel && r.get(i).controlRow() ? t + 10 * k : 0);
-        // keep the selection visible
-        scroll = clamp(scroll, 0, r.size() - 1);
+        int visible = Math.max(1, menuH / rowH);
         if (sel < scroll) scroll = sel;
-        while (true) {
-            int used = 0;
-            for (int i = scroll; i <= sel; i++) used += hgt[i];
-            if (used <= menuH || scroll >= sel) break;
-            scroll++;
+        if (sel >= scroll + visible) scroll = sel - visible + 1;
+        scroll = clamp(scroll, 0, Math.max(0, r.size() - visible));
+        int labelW = 0, widest = 0;
+        for (Row row : r) if (row.box()) {
+            labelW = Math.max(labelW, g.textWidth(row.label, t));
+            int dials = 0;
+            for (Part p : row.parts()) if (p.dial()) dials++;
+            widest = Math.max(widest, boxWidth(row.parts().size() - dials) + dials * ((t | 1) + 8 * k));
         }
-        int labelW = 0;
-        for (Row row : r) if (row.controlRow()) labelW = Math.max(labelW, g.textWidth(row.label, t));
+        boxColumn = menuX + menuW - 14 * k - widest;
         g.clip(menuX, menuY, menuW, menuH);
-        int y = menuY, last = scroll;
-        for (int i = scroll; i < r.size() && y + hgt[i] <= menuY + menuH; i++) {
+        for (int i = scroll; i < r.size() && i < scroll + visible; i++) {
             Row row = r.get(i);
+            int y = menuY + (i - scroll) * rowH;
             boolean on = i == sel;
-            if (on) g.fill(menuX, y, menuW, hgt[i], WHITE);
-            if (row.controlRow()) drawControlRow(g, row, y, on, labelW);
-            else drawValueRow(g, row, y, on);
-            y += hgt[i];
-            last = i;
+            if (on) g.fill(menuX, y, menuW, rowH, WHITE);
+            hits.add(new Hit(menuX, y, menuW, rowH, row.key, ROW, 0));
+            if (row.box()) drawBoxRow(g, row, y, on, labelW); else drawValueRow(g, row, y, on);
         }
         g.unclip();
         if (scroll > 0) triangleUp(g, menuX + menuW - 10 * k, menuY - 6 * k, 4 * k, true, DIM);
-        if (last < r.size() - 1 || y > menuY + menuH) triangleUp(g, menuX + menuW - 10 * k, menuY + menuH + 2 * k, 4 * k, false, DIM);
+        if (scroll + visible < r.size()) triangleUp(g, menuX + menuW - 10 * k, menuY + visible * rowH + 2 * k, 4 * k, false, DIM);
     }
 
     private void drawValueRow(Surface g, Row row, int y, boolean on) {
         int ty = y + (rowH - t) / 2, right = menuX + menuW - 14 * k;
         g.text(row.label, menuX + 10 * k, ty, t, on ? BLACK : WHITE);
-        hits.add(new Hit(menuX, y, menuW, rowH, row.key, ROW, 0));
         boolean arrows = on && row.changeable();
         int arrowW = arrows ? 6 * k : 0, gap = arrows ? 6 * k : 0;
         int labelEnd = menuX + 10 * k + g.textWidth(row.label, t) + 16 * k;
@@ -793,135 +642,118 @@ public final class Ui {
         }
     }
 
-    private void drawControlRow(Surface g, Row row, int y, boolean on, int labelW) {
-        int f = focus.getOrDefault(row.key, 0);
-        int fg = on ? BLACK : WHITE;
-        int x0 = menuX + 10 * k, right = menuX + menuW - 14 * k, cy = y + rowH / 2;
-        boolean enabled = row.selectable();
-        hits.add(new Hit(menuX, y, menuW, rowH + (on ? t + 10 * k : 0), row.key, ROW, 0));
+    /**
+     * Label, sample patch, and the slider box. The box only appears once the row is chosen: a
+     * border in the row's ink, split into sections that fill with pixel blocks like a progress
+     * bar; dials sit after it.
+     */
+    private void drawBoxRow(Surface g, Row row, int y, boolean on, int labelW) {
+        int ink = on ? BLACK : WHITE, cy = y + rowH / 2;
+        boolean avail = row.available();
+        g.text(row.label, menuX + 10 * k, y + (rowH - t) / 2, t, !avail ? DIM : ink);
+        int right = menuX + menuW - 14 * k;
+        List<Part> parts = row.parts();
+        int dials = 0;
+        for (Part p : parts) if (p.dial()) dials++;
+        int bars = parts.size() - dials;
+        int bh = rowH - 2 * k, dialD = (t | 1);
+        int boxW = boxWidth(bars);
+        int boxX = boxColumn;   // all boxes start in one column, all patches in another
 
-        // the mark: O = selectable, a bigger red X over it = chosen (the logo's shapes and colours)
-        int box = t;
-        if (on && f == 0) focusBox(g, x0 - 3 * k, y + 2 * k, box + 6 * k, rowH - 4 * k);
-        int markColor = !enabled ? DIM : on && f != 0 ? BLACK : on ? LOGO_WHITE : LOGO_WHITE;
-        int o = (box * 3 / 4) | 1, xs = (box * 5 / 4) | 1, mcx = x0 + box / 2;
-        shape(g, Style.BEADS, mcx - o / 2, cy - o / 2, o, markColor);
-        if (row.chosen()) shape(g, Style.STITCH, mcx - xs / 2, cy - xs / 2, xs, LOGO_RED);
-        hits.add(new Hit(x0 - 6 * k, y, box + 12 * k, rowH, row.key, MARK, 0));
-
-        int labelX = x0 + box + 14 * k;
-        g.text(row.label, labelX, y + (rowH - t) / 2, t, enabled ? fg : DIM);
-
-        // patch on the right
-        int ph = rowH - 8 * k, pw = ph * 5 / 2, px = right - pw;
+        // patch, just left of the box
+        int ph = rowH - 10 * k, pw = ph * 2;
+        int px = boxX - 14 * k - pw;
         Object patch = row.patch(pw, ph);
-        g.fill(px - k, cy - ph / 2 - k, pw + 2 * k, ph + 2 * k, on ? BLACK : DIM);
         if (patch != null) g.image(patch, px, cy - ph / 2);
-        if (!enabled) dimOver(g, px, cy - ph / 2, pw, ph);
-        hits.add(new Hit(px, y, pw, rowH, row.key, PATCH, 0));
+        if (!avail) veil(g, px, cy - ph / 2, pw, ph, on ? WHITE : BLACK);
 
-        // controls between the label and the patch
-        List<Control> cs = row.controls();
-        int cx0 = labelX + labelW + 18 * k, cx1 = px - 16 * k;
-        int fixed = 0, sliders = 0;
-        for (Control c : cs) if (isRound(c)) fixed += t; else if (!(c instanceof Swatch)) sliders++;
-        int gap = 14 * k;
-        int nGaps = Math.max(0, visibleCount(cs) - 1);
-        int sw = sliders == 0 ? 0 : Math.min(12 * t, Math.max(4 * t / 2, (cx1 - cx0 - fixed - gap * nGaps) / sliders));
-        int cx = cx0, idx = 0;
-        for (Control c : cs) {
-            idx++;
-            if (c instanceof Swatch) { if (on && f == idx) focusBox(g, px - 4 * k, y + 2 * k, pw + 8 * k, rowH - 4 * k); continue; }   // the patch is its control
-            int cw = isRound(c) ? t : sw;
-            boolean focused = on && f == idx;
-            if (focused) focusBox(g, cx - 4 * k, y + 2 * k, cw + 8 * k, rowH - 4 * k);
-            int ink = !c.enabled() ? DIM : focused ? WHITE : fg;
-            drawControl(g, c, cx, cy, cw, ink, on && !focused);
-            hits.add(new Hit(cx - 4 * k, y, cw + 8 * k, rowH, row.key, c, idx));
-            cx += cw + gap;
+        if (!row.chosen()) {
+            if (on && avail) outline(g, boxX, cy - bh / 2, boxW, bh, k, ICON);   // a hint of where the box will be
+            return;
         }
-
-        // second line when highlighted: what the focused control is, plus Save / Reset
-        if (on) {
-            int ly = y + rowH + 2 * k;
-            Control fc = focusedControl(row);
-            String d = fc == null ? (row.chosen() ? "Chosen" : row.selectable() ? "Not chosen" : "Needs Greyscale") : fc.describe();
-            g.text(fitText(g, d, menuW / 2, t), labelX, ly, t, DIM);
-            int ax = right;
-            List<Control> acts = row.actions();
-            for (int i = acts.size() - 1; i >= 0; i--) {
-                Control a = acts.get(i);
-                int aw = g.textWidth(a.name, t) + 16 * k;
-                ax -= aw;
-                boolean focused = f == 1 + cs.size() + i;
-                g.fill(ax, ly - 2 * k, aw, t + 4 * k, focused ? BLACK : DIM);
-                g.text(a.name, ax + 8 * k, ly, t, WHITE);
-                hits.add(new Hit(ax, ly - 2 * k, aw, t + 4 * k, row.key, a, 1 + cs.size() + i));
-                ax -= 10 * k;
+        int focusSec = clamp(section.getOrDefault(row.key, 0), 0, parts.size() - 1);
+        boolean multi = parts.size() > 1;
+        outline(g, boxX, cy - bh / 2, boxW, bh, 2 * k, ink);
+        int inner = boxW - 8 * k, sx = boxX + 4 * k, secGap = 4 * k;
+        int secW = bars == 0 ? 0 : (inner - secGap * (bars - 1)) / bars;
+        int bi = 0, di = 0;
+        for (int i = 0; i < parts.size(); i++) {
+            Part p = parts.get(i);
+            boolean focused = on && (!multi || i == focusSec);
+            int c = !on ? WHITE : (focused ? BLACK : ICON);
+            if (!on && multi && i != focusSec) c = GREY;
+            if (p.dial()) {
+                int dx = boxX + boxW + 8 * k + di * (dialD + 8 * k);
+                dial(g, dx, cy - dialD / 2, dialD, p, c);
+                hits.add(new Hit(dx, y, dialD, rowH, row.key, p, i));
+                di++;
+                continue;
             }
+            int x0 = sx + bi * (secW + secGap);
+            if (bi > 0) g.fill(x0 - secGap / 2 - k / 2, cy - bh / 2, Math.max(1, k), bh, ink);   // section divider
+            blocks(g, x0, cy - bh / 2 + 3 * k, secW, bh - 6 * k, p, row.cellColors(), c, on ? WHITE : BLACK);
+            hits.add(new Hit(x0, y, secW, rowH, row.key, p, i));
+            bi++;
         }
     }
 
-    private static int visibleCount(List<Control> cs) { int n = 0; for (Control c : cs) if (!(c instanceof Swatch)) n++; return n; }
-
-    private static boolean isRound(Control c) {
-        return c instanceof KnobControl && ((KnobControl) c).knob.kind != Kind.SLIDER;
-    }
-
-    private void focusBox(Surface g, int x, int y, int w, int h) { g.fill(x, y, w, h, BLACK); }
-
-    private void dimOver(Surface g, int x, int y, int w, int h) {
-        for (int yy = 0; yy < h; yy += 2 * k) g.fill(x, y + yy, w, k, BLACK);   // scanline veil
-    }
-
-    private void drawControl(Surface g, Control c, int x, int cy, int w, int ink, boolean onBar) {
-        if (c instanceof KnobControl && ((KnobControl) c).knob.kind == Kind.DIAL) {
-            KnobControl kc = (KnobControl) c;
-            int d = w | 1, x0 = x, y0 = cy - d / 2;
-            boolean[] ring = new boolean[d * d];
-            double ce = (d - 1) / 2.0;
-            for (int yy = 0; yy < d; yy++) for (int xx = 0; xx < d; xx++) {
-                double r = Math.hypot(xx - ce, yy - ce);
-                ring[yy * d + xx] = r <= d / 2.0 - 0.3 && r >= d / 2.0 - 0.3 - 2 * k;
-            }
-            runs(g, ring, x0, y0, d, ink);
-            double a = Math.toRadians(kc.knob.values[kc.get()] - 90);
-            for (int i = 0; i < d / 2 - 2 * k; i += k) {
-                int px = (int) Math.round(x0 + ce + Math.cos(a) * i), py = (int) Math.round(y0 + ce + Math.sin(a) * i);
-                g.fill(px - k / 2, py - k / 2, 2 * k, 2 * k, ink);
+    /**
+     * A pixelated progress bar: one block per step, filled up to the value. The setting's name
+     * sits inside and flips colour where the blocks pass under it, like loading-bar text.
+     */
+    private void blocks(Surface g, int x, int y, int w, int h, Part p, int[] colors, int ink, int paper) {
+        int n = p.steps();
+        if (colors != null) {   // colour cells: all shown, the chosen one full height
+            int gap = Math.max(1, k), bw = Math.max(1, (w - gap * (n - 1)) / n), x0 = x + (w - (bw * n + gap * (n - 1))) / 2;
+            for (int i = 0; i < n; i++) {
+                int inset = i == p.get() ? 0 : h / 4;
+                g.fill(x0 + i * (bw + gap), y + inset, bw, h - 2 * inset, colors[i]);
             }
             return;
         }
-        if (c instanceof KnobControl && ((KnobControl) c).knob.kind == Kind.BUTTON) {
-            // a big shiny cartoon button
-            int d = w | 1, x0 = x, y0 = cy - d / 2;
-            double ce = (d - 1) / 2.0;
-            for (int yy = 0; yy < d; yy++) for (int xx = 0; xx < d; xx++) {
-                double r = Math.hypot(xx - ce, yy - ce);
-                if (r > d / 2.0 - 0.3) continue;
-                int col = r > d / 2.0 - 0.3 - 2 * k ? BLACK                                     // outline
-                        : yy > ce + (d / 2.0) * 0.35 && r > d * 0.30 ? BUTTON_DARK                // shadow at the bottom
-                        : BUTTON_RED;
-                double hx = xx - (ce - d * 0.18), hy = yy - (ce - d * 0.2);
-                if (hx * hx / (d * d * 0.012) + hy * hy / (d * d * 0.006) <= 1) col = 0xffffd9d6;   // highlight
-                g.fill(x0 + xx, y0 + yy, 1, 1, col);
-            }
-            KnobControl kc = (KnobControl) c;
-            for (int i = 0; i < kc.get(); i++) g.fill(x0 + d + 3 * k, y0 + d - (i + 1) * 3 * k, 2 * k, 2 * k, BUTTON_RED);   // melt level
-            return;
+        // fill in whole steps (the pixelated part), with a notch under each step boundary
+        int filledTo = x + (int) Math.round((p.get() + 1) * w / (double) n);
+        g.fill(x, y, filledTo - x, h, ink);
+        for (int i = 1; i < n; i++) {
+            int nx = x + (int) Math.round(i * w / (double) n);
+            g.fill(nx - k / 2, y + h - 2 * k, Math.max(1, k), 2 * k, nx < filledTo ? paper : ink);
         }
-        int steps, value;
-        if (c instanceof Slider) { steps = ((Slider) c).steps; value = ((Slider) c).get.getAsInt(); }
-        else { KnobControl kc = (KnobControl) c; steps = kc.knob.steps(); value = kc.get(); }
-        g.fill(x, cy - k, w, 2 * k, ink == DIM ? DIM : onBar ? ICON : (ink == WHITE ? GREY : DIM));
-        for (int i = 0; i < steps; i++) {
-            int tx = x + (int) Math.round(i * (w - 1) / (double) Math.max(1, steps - 1));
-            g.fill(tx - k / 2, cy - 3 * k, Math.max(1, k), 6 * k, ink == DIM ? DIM : GREY);
-        }
-        int kx = x + (int) Math.round(value * (w - 1) / (double) Math.max(1, steps - 1));
-        int kh = t * 3 / 4;
-        g.fill(kx - 3 * k, cy - kh / 2, 6 * k, kh, ink);
+        String word = fitText(g, p.name(), w - 4 * k, t);
+        int tw = g.textWidth(word, t), tx = x + (w - tw) / 2, ty = y + (h - t) / 2 - 2 * k;
+        g.clip(x, y, Math.max(0, filledTo - x), h);           // over the fill: paper colour
+        g.text(word, tx, ty, t, paper);
+        g.unclip();
+        g.clip(filledTo, y, Math.max(0, x + w - filledTo), h); // over the empty part: ink
+        g.text(word, tx, ty, t, ink);
+        g.unclip();
     }
+
+    private int boxColumn;
+
+    private int boxWidth(int bars) { return Math.min(menuW * 2 / 5, Math.max(5 * t, bars * 4 * t)); }
+
+    private void dial(Surface g, int x, int y, int d, Part p, int ink) {
+        double ce = (d - 1) / 2.0;
+        boolean[] ring = new boolean[d * d];
+        for (int yy = 0; yy < d; yy++) for (int xx = 0; xx < d; xx++) {
+            double r = Math.hypot(xx - ce, yy - ce);
+            ring[yy * d + xx] = r <= d / 2.0 - 0.3 && r >= d / 2.0 - 0.3 - 2 * k;
+        }
+        runs(g, ring, x, y, d, ink);
+        // rotation: all the way round; meltiness: a 270-degree sweep
+        double deg = p.steps() > 6 ? p.get() * 360.0 / p.steps() : p.get() * 270.0 / (p.steps() - 1);
+        double a = Math.toRadians(deg - 90);
+        for (int i = 0; i <= d / 2 - 3 * k; i += k) {
+            int px = (int) Math.round(x + ce + Math.cos(a) * i), py = (int) Math.round(y + ce + Math.sin(a) * i);
+            g.fill(px - k, py - k, 2 * k, 2 * k, ink);
+        }
+    }
+
+    private void outline(Surface g, int x, int y, int w, int h, int th, int c) {
+        g.fill(x, y, w, th, c); g.fill(x, y + h - th, w, th, c); g.fill(x, y, th, h, c); g.fill(x + w - th, y, th, h, c);
+    }
+
+    private void veil(Surface g, int x, int y, int w, int h, int c) { for (int yy = 0; yy < h; yy += 2 * k) g.fill(x, y + yy, w, k, c); }
 
     // ---- patches
 
@@ -941,23 +773,19 @@ public final class Ui {
     /** A sample of a style at the real pixel size (smaller only if two pixels wouldn't fit), in the current tones. */
     private Object stylePatch(Style st, int pw, int ph) {
         int cell = Math.max(2, Math.min(s.cellSize, ph / 2));
-        int[] values = s.color ? new int[]{0xfffafafa, 0xffd8333a, 0xff3570d8, 0xfff2c230} : lightTones();
+        int[] values = s.color ? new int[]{0xfffafafa, Settings.SWATCHES[0], Settings.SWATCHES[5], Settings.SWATCHES[2]} : lightTones();
         String key = "style|" + st + "|" + pw + "x" + ph + "|" + cell + "|" + Arrays.toString(values) + "|" + Arrays.toString(s.knob[st.ordinal()]);
         return cached(key, () -> {
             int cols = (pw + cell - 1) / cell + 1, rows = (ph + cell - 1) / cell + 1;
             int[] c = new int[cols * rows];
             for (int y = 0; y < rows; y++) for (int x = 0; x < cols; x++) c[y * cols + x] = values[(x + y) % values.length];
-            return cropTo(Engine.draw(new Grid(cols, rows, c), st, cell, s), pw, ph);
+            Engine.Image im = Engine.draw(new Grid(cols, rows, c), st, cell, s);
+            int[] out = new int[pw * ph];
+            for (int y = 0; y < ph; y++) System.arraycopy(im.argb, y * im.width, out, y * pw, pw);
+            return new Engine.Image(pw, ph, out);
         });
     }
 
-    private static Engine.Image cropTo(Engine.Image im, int pw, int ph) {
-        int[] out = new int[pw * ph];
-        for (int y = 0; y < ph; y++) System.arraycopy(im.argb, y * im.width, out, y * pw, Math.min(pw, im.width));
-        return new Engine.Image(pw, ph, out);
-    }
-
-    /** Light tones of the current greyscale setting (black would just show nothing). */
     private int[] lightTones() {
         int[] all = greyValues(s.greyTones);
         int[] out = new int[all.length - 1];
@@ -973,80 +801,67 @@ public final class Ui {
         return v;
     }
 
+    private Object bands(String key, int pw, int ph, int[] colors) {
+        return cached(key + "|" + pw + "x" + ph + "|" + Arrays.toString(colors), () -> {
+            int[] out = new int[pw * ph];
+            for (int x = 0; x < pw; x++) { int c = colors[Math.min(colors.length - 1, x * colors.length / pw)]; for (int y = 0; y < ph; y++) out[y * pw + x] = c; }
+            return new Engine.Image(pw, ph, out);
+        });
+    }
+
     /** All grey tones side by side, black to white. */
     private Object tonesPatch(int pw, int ph) {
-        return cached("tones|" + pw + "x" + ph + "|" + s.greyTones, () -> {
-            int[] v = greyValues(s.greyTones);
-            int[] out = new int[pw * ph];
-            for (int x = 0; x < pw; x++) {
-                int g = v[Math.min(v.length - 1, x * v.length / pw)];
-                for (int y = 0; y < ph; y++) out[y * pw + x] = 0xff000000 | g << 16 | g << 8 | g;
-            }
-            return new Engine.Image(pw, ph, out);
-        });
+        int[] v = greyValues(s.greyTones), c = new int[v.length];
+        for (int i = 0; i < v.length; i++) c[i] = 0xff000000 | v[i] << 16 | v[i] << 8 | v[i];
+        return bands("tones", pw, ph, c);
     }
 
-    /** A colour strip with as many bands as colours (up to the patch's room). */
+    /** The colour family, one band per step of the Colors slider (up to all 8). */
     private Object colorPatch(int pw, int ph) {
-        return cached("colors|" + pw + "x" + ph + "|" + s.colors, () -> {
-            int n = Math.min(s.colors, Math.max(4, pw / Math.max(2, ph / 4)));
-            int[] out = new int[pw * ph];
-            for (int x = 0; x < pw; x++) {
-                int band = x * n / pw;
-                for (int y = 0; y < ph; y++) {
-                    boolean top = y < ph / 2;
-                    out[y * pw + x] = Engine.fromHsv((band * 360f / n) % 360f, top ? 0.65f : 0.4f, top ? 0.9f : 0.6f);
-                }
-            }
-            return new Engine.Image(pw, ph, out);
-        });
+        int n = clamp((s.colors - 4) / 4 + 1, 1, 8);
+        return bands("colors", pw, ph, Arrays.copyOf(Settings.SWATCHES, n));
     }
 
-    /** Five of the 24 accent swatches, the chosen one in the middle, framed. */
-    private Object swatchPatch(int pw, int ph) {
-        return cached("swatch|" + pw + "x" + ph + "|" + s.swatch, () -> {
-            int[] out = new int[pw * ph];
-            Arrays.fill(out, BLACK);
-            int n = 5, cw = pw / n;
-            for (int i = 0; i < n; i++) {
-                int sw = Settings.SWATCHES[Math.floorMod(s.swatch + i - 2, Settings.SWATCHES.length)];
-                boolean mid = i == 2;
-                int inset = mid ? 0 : Math.max(2, ph / 6);
-                for (int y = inset; y < ph - inset; y++)
-                    for (int x = i * cw + (mid ? 0 : 1); x < (i + 1) * cw - (mid ? 0 : 1); x++) out[y * pw + x] = sw;
-                if (mid) for (int y = 0; y < ph; y++) for (int x = i * cw; x < (i + 1) * cw; x++)
-                    if (y < 2 || y >= ph - 2 || x < i * cw + 2 || x >= (i + 1) * cw - 2) out[y * pw + x] = WHITE;
-            }
-            return new Engine.Image(pw, ph, out);
-        });
+    /** Grey with the accent: what a picture will look like. */
+    private Object accentPatch(int pw, int ph) {
+        int a = Settings.SWATCHES[s.swatch];
+        return bands("accent", pw, ph, new int[]{0xff606060, a, 0xffb0b0b0});
     }
 
-    // ---- preview panes
+    // ---- preview
 
-    private void drawPanes(Surface g, int x, int y, int w, int h) {
+    private void drawPreview(Surface g, int x, int y, int w, int h) {
         if (input == null) { centered(g, "Choose an input folder or image", x, y, w, h, DIM); return; }
         if (items == null) { centered(g, "Looking for images...", x, y, w, h, DIM); return; }
         if (items.isEmpty()) { centered(g, "No images found", x, y, w, h, DIM); return; }
-        layoutPanes(x, y, w, h);
-        String highlighted = selectedKey.startsWith("style:") ? selectedKey.substring(6) : "";
-        for (String id : paneOrder) {
-            Pane p = panes.get(id);
-            if (p == null) continue;
-            String title = id.equals("before") ? "Before" : Style.valueOf(id).label;
-            boolean hl = id.equals(highlighted);
-            if (p.img == null) {
-                g.text(fitText(g, title, p.boxW, t), p.x, p.y + p.boxH / 2 - t - 6 * k, t, hl ? WHITE : GREY);
-                centered(g, "...", p.x, p.y, p.boxW, p.boxH, DIM);
-                continue;
-            }
-            int ix = p.x + (p.boxW - p.w) / 2, iy = p.y + (p.boxH - p.h) / 2;
-            g.text(fitText(g, title, p.boxW, t), ix, iy - t - 8 * k, t, hl ? WHITE : GREY);   // title right above its picture
-            g.image(p.img, ix, iy);
-            if (hl) {   // frame the pane of the highlighted style
-                g.fill(ix - 2 * k, iy - 2 * k, p.w + 4 * k, k, WHITE); g.fill(ix - 2 * k, iy + p.h + k, p.w + 4 * k, k, WHITE);
-                g.fill(ix - 2 * k, iy - 2 * k, k, p.h + 4 * k, WHITE); g.fill(ix + p.w + k, iy - 2 * k, k, p.h + 4 * k, WHITE);
+        int navH = t + 12 * k;
+        int bw = w, bh = h - navH;
+        int pw = Math.max(4 * t, w / 4), ph = pw;
+        if (bw != boxW || bh != boxH || pw != pipW) { boxW = bw; boxH = bh; pipW = pw; pipH = ph; schedulePreview(); }
+        if (previewImg == null) centered(g, "Rendering...", x, y, w, bh, DIM);
+        else {
+            int ix = x + (bw - previewImgW) / 2, iy = y + (bh - previewImgH) / 2;
+            g.image(previewImg, ix, iy);
+            if (beforeImg != null) {   // the original, small, in the top-right corner
+                int bx = ix + previewImgW - beforeW - 6 * k, by = iy + 6 * k;
+                if (previewImgW < beforeW * 2) { bx = x + bw - beforeW; by = y; }
+                outline(g, bx - 2 * k, by - 2 * k, beforeW + 4 * k, beforeH + 4 * k, 2 * k, BLACK);
+                g.image(beforeImg, bx, by);
+                outline(g, bx - k, by - k, beforeW + 2 * k, beforeH + 2 * k, k, GREY);
             }
         }
+        // page line: < Style  2 / 3 >
+        List<Style> list = chosenStyles();
+        if (!list.contains(page)) list.add(page);
+        list.sort(Comparator.comparingInt(Enum::ordinal));
+        String label = page.label + (styleOn[page.ordinal()] ? "" : " (not chosen)") + "   " + (list.indexOf(page) + 1) + " / " + list.size();
+        int lw = g.textWidth(label, t), ly = y + h - navH + 6 * k, cx = x + w / 2;
+        g.text(label, cx - lw / 2, ly, t, GREY);
+        int aw = 6 * k, cyA = ly + t / 2;
+        triangle(g, cx - lw / 2 - 16 * k - aw, cyA, aw, true, list.size() > 1 ? WHITE : DIM);
+        triangle(g, cx + lw / 2 + 16 * k, cyA, aw, false, list.size() > 1 ? WHITE : DIM);
+        hits.add(new Hit(x, ly - 4 * k, w / 2, t + 8 * k, "", PAGE_LEFT, 0));
+        hits.add(new Hit(x + w / 2, ly - 4 * k, w - w / 2, t + 8 * k, "", PAGE_RIGHT, 0));
     }
 
     private void drawPopup(Surface g, int w, int h) {
@@ -1074,8 +889,7 @@ public final class Ui {
         g.text(running ? (cancel.get() ? "Cancelling..." : "Converting") : (cancel.get() ? "Cancelled" : "Done"), x, cy, t * 2, WHITE);
         cy += 2 * t + 20 * k;
         int barH = t;
-        g.fill(x, cy, bw, k * 2, WHITE); g.fill(x, cy + barH - 2 * k, bw, 2 * k, WHITE);
-        g.fill(x, cy, 2 * k, barH, WHITE); g.fill(x + bw - 2 * k, cy, 2 * k, barH, WHITE);
+        outline(g, x, cy, bw, barH, 2 * k, WHITE);
         int fillW = total == 0 ? 0 : (int) ((bw - 8 * k) * (long) done / total);
         g.fill(x + 4 * k, cy + 4 * k, fillW, barH - 8 * k, WHITE);
         cy += barH + 14 * k;
@@ -1097,22 +911,22 @@ public final class Ui {
         }
     }
 
-    private void drawHelp(Surface g, int w, int h, String[] pairs) {
+    private final List<Object> helpKeys = new ArrayList<>();
+
+    /** Button hints, bottom right: glyph, label, key (tappable). */
+    private void drawHelp(Surface g, int w, int h, Object[] items3) {
         int y = h - (t + 20 * k) + 4 * k + (t + 4 * k) / 2;
         int x = w - 14 * k;
         int d = t + 2 * k;
-        for (int i = pairs.length - 2; i >= 0; i -= 2) {
-            String label = pairs[i + 1];
+        helpKeys.clear();
+        for (int i = items3.length - 3; i >= 0; i -= 3) {
+            String glyph = (String) items3[i], label = (String) items3[i + 1];
+            int right = x;
             x -= g.textWidth(label, t);
             g.text(label, x, y - t / 2, t, GREY);
-            String glyph = pairs[i];
             int gw = glyph.equals("LR") ? 2 * d + 4 * k : d;
             x -= 6 * k + gw;
-            if (glyph.equals("<>")) {
-                roundRect(g, x, y - d / 2, d, d, 3 * k, ICON);
-                triangle(g, x + 3 * k, y, 4 * k, true, BLACK);
-                triangle(g, x + d - 7 * k, y, 4 * k, false, BLACK);
-            } else if (glyph.equals("LR")) {
+            if (glyph.equals("LR")) {
                 for (int j = 0; j < 2; j++) {
                     int bx = x + j * (d + 4 * k);
                     roundRect(g, bx, y - d / 2, d, d, 3 * k, ICON);
@@ -1123,14 +937,13 @@ public final class Ui {
                 circle(g, x, y - d / 2, d, ICON);
                 g.text(glyph, x + (d - g.textWidth(glyph, t)) / 2, y - t / 2, t, BLACK);
             }
+            helpKeys.add(items3[i + 2]);
+            hits.add(new Hit(x, y - d / 2, right - x, d, "", HELP, helpKeys.size() - 1));
             x -= 18 * k;
         }
     }
 
     // ------------------------------------------------------------------ pixel shapes
-
-    /** The logo's O (bead) or X (cross stitch), d pixels square, pixel-exact. */
-    private void shape(Surface g, Style which, int x, int y, int d, int color) { runs(g, Engine.stamp(which, d), x, y, d, color); }
 
     private void runs(Surface g, boolean[] m, int x, int y, int d, int color) {
         for (int yy = 0; yy < d; yy++) {
@@ -1197,24 +1010,17 @@ public final class Ui {
 
     private final Map<String, String> savedKnobs = new HashMap<>();
 
-    private void saveKnobs(Style st) {
-        StringBuilder b = new StringBuilder();
-        for (int v : s.knob[st.ordinal()]) b.append(v).append(',');
-        savedKnobs.put(st.name(), b.toString());
-        savePrefs();
-    }
-
     private void savePrefs() {
         StringBuilder b = new StringBuilder();
         b.append("color=").append(s.color).append('\n').append("tones=").append(s.greyTones).append('\n')
          .append("colors=").append(s.colors).append('\n').append("accentOn=").append(s.accent).append('\n')
-         .append("swatch=").append(s.swatch).append('\n').append("range=").append(s.accentRange).append('\n')
+         .append("swatch8=").append(s.swatch).append('\n')
          .append("cells=").append(s.cells).append('\n').append("cell=").append(s.cellSize).append('\n')
          .append("replace=").append(replace).append('\n').append("zoom=").append(zoom).append('\n');
         StringBuilder st = new StringBuilder();
         for (Style x : Style.values()) if (styleOn[x.ordinal()]) st.append(x.name()).append(',');
         b.append("styles=").append(st).append('\n');
-        for (Map.Entry<String, String> e : savedKnobs.entrySet()) b.append("knobs.").append(e.getKey()).append('=').append(e.getValue()).append('\n');
+        for (Map.Entry<String, String> e : savedKnobs.entrySet()) b.append("knobs2.").append(e.getKey()).append('=').append(e.getValue()).append('\n');
         if (input != null) b.append("input=").append(inputFolder ? "d" : "f").append(host.savePlace(input)).append('\n').append("inputName=").append(inputName).append('\n');
         if (output != null) b.append("output=").append(host.savePlace(output)).append('\n').append("outputName=").append(outputName).append('\n');
         try { host.savePrefs(b.toString()); } catch (Exception ignored) { }
@@ -1231,8 +1037,7 @@ public final class Ui {
             s.greyTones = clamp(Integer.parseInt(m.getOrDefault("tones", "3")), 2, 8);
             s.colors = clamp(Integer.parseInt(m.getOrDefault("colors", "12")) / 4 * 4, 4, 32);
             s.accent = Boolean.parseBoolean(m.getOrDefault("accentOn", "false"));
-            s.swatch = clamp(Integer.parseInt(m.getOrDefault("swatch", "0")), 0, Settings.SWATCHES.length - 1);
-            s.accentRange = clamp(Integer.parseInt(m.getOrDefault("range", "1")), 0, 2);
+            s.swatch = clamp(Integer.parseInt(m.getOrDefault("swatch8", "0")), 0, Settings.SWATCHES.length - 1);
             s.cells = clamp(Integer.parseInt(m.getOrDefault("cells", "96")), 16, 256);
             s.cellSize = clamp(Integer.parseInt(m.getOrDefault("cell", "15")), 2, 40);
             replace = Boolean.parseBoolean(m.getOrDefault("replace", "false"));
@@ -1243,7 +1048,7 @@ public final class Ui {
                 for (String n : st.split(",")) if (!n.isEmpty()) try { styleOn[Style.valueOf(n).ordinal()] = true; } catch (IllegalArgumentException ignored) { }
             }
             for (Style x : Style.values()) {
-                String v = m.get("knobs." + x.name());
+                String v = m.get("knobs2." + x.name());
                 if (v == null) continue;
                 savedKnobs.put(x.name(), v);
                 String[] parts = v.split(",");
