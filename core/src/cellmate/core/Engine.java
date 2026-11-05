@@ -302,12 +302,18 @@ public final class Engine {
     /** Draws with each style's default knobs. */
     public static Image draw(Grid g, Settings.Style style, int cellSize) { return draw(g, style, cellSize, new Settings()); }
 
-    public static Image draw(Grid g, Settings.Style style, int cellSize, Settings s) {
+    /** The saved picture: exactly as pixel_crt.py draws it. */
+    public static Image draw(Grid g, Settings.Style style, int cellSize, Settings s) { return draw(g, style, cellSize, s, SUPERSAMPLE); }
+
+    /** A quicker draw for the on-screen preview: Border, Rounded and Jitter use half the supersampling. */
+    public static Image drawPreview(Grid g, Settings.Style style, int cellSize, Settings s) { return draw(g, style, cellSize, s, 2); }
+
+    private static Image draw(Grid g, Settings.Style style, int cellSize, Settings s, int supersample) {
         switch (style) {
             case SOLID: return solid(g, cellSize, s.value(style, 0), s.value(style, 1));
             case STITCH: case BEADS: return stamps(g, cellSize, stamp(style, cellSize, s));
             case MELTED: return melted(g, cellSize, s);
-            default: return blocks(g, cellSize, style, s.value(style, 0));
+            default: return blocks(g, cellSize, style, s.value(style, 0), supersample);
         }
     }
 
@@ -443,11 +449,11 @@ public final class Engine {
     }
 
     /**
-     * Border, rounded and jitter: squares drawn 4x larger on a grey background, then scaled down
-     * with Lanczos (as pixel_crt.py does). Streamed a few rows at a time to keep memory small.
+     * Border, rounded and jitter: squares drawn larger (4x, as pixel_crt.py does) on a grey
+     * background, then scaled down with Lanczos. Streamed a few rows at a time to keep memory small.
      */
-    private static Image blocks(Grid g, int cellSize, Settings.Style style, double amount) {
-        final int c = cellSize * SUPERSAMPLE, cols = g.cols, rows = g.rows;
+    private static Image blocks(Grid g, int cellSize, Settings.Style style, double amount, int supersample) {
+        final int c = cellSize * supersample, cols = g.cols, rows = g.rows;
         final int W = cols * c, H = rows * c, w = cols * cellSize, h = rows * cellSize;
         final double inset = style == Settings.Style.BORDER ? amount : style == Settings.Style.JITTER ? 0.03 : 0.0;
         double[] jitter = new double[rows * cols];

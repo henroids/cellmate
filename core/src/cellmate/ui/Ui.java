@@ -63,6 +63,8 @@ public final class Ui {
     private Style previewImgStyle;
     private Picture picture;
     private String pictureKey;
+    private Engine.Image beforeSmall;   // the preview's "before" picture, kept while the photo and its box stay the same
+    private int beforeBoxW, beforeBoxH;
     private int boxW, boxH, pipW, pipH;
 
     // ---- batch
@@ -563,16 +565,25 @@ public final class Ui {
                 Picture p = picture;
                 boolean newPicture = p == null || !key.equals(pictureKey);
                 if (newPicture) { p = host.decode(in, folder, rel); picture = p; pictureKey = key; }
-                Engine.Image photo = Engine.fit(new Engine.Image(p.width, p.height, p.argb), pw, ph);
-                Object before = host.makeImage(photo.argb, photo.width, photo.height);
+                // the original photo for the corner, made once per photo and size
+                Engine.Image photo = beforeSmall;
+                if (newPicture || photo == null || pw != beforeBoxW || ph != beforeBoxH) {
+                    photo = beforeSmall = Engine.fit(new Engine.Image(p.width, p.height, p.argb), pw, ph);
+                    beforeBoxW = pw; beforeBoxH = ph;
+                }
+                final int photoW = photo.width, photoH = photo.height;
+                Object before = host.makeImage(photo.argb, photoW, photoH);
                 if (seq != previewSeq.get()) return;
+                // drawn at the size it's shown, not the full output size: the same look, many times faster
                 Grid grid = Engine.grid(p, set);
-                Engine.Image shown = Engine.fit(Engine.draw(grid, style, set.cellSizeFor(grid.cols, grid.rows), set), bw, bh);
+                int onScreen = (int) Math.ceil(Math.min(bw / (double) grid.cols, bh / (double) grid.rows));
+                int cell = Math.max(2, Math.min(set.cellSizeFor(grid.cols, grid.rows), onScreen));
+                Engine.Image shown = Engine.fit(Engine.drawPreview(grid, style, cell, set), bw, bh);
                 Object img = host.makeImage(shown.argb, shown.width, shown.height);
                 host.runOnUi(() -> {
                     if (seq != previewSeq.get()) return;
                     previewImg = img; previewImgW = shown.width; previewImgH = shown.height; previewImgStyle = style;
-                    beforeImg = before; beforeW = photo.width; beforeH = photo.height;
+                    beforeImg = before; beforeW = photoW; beforeH = photoH;
                     host.repaint();
                 });
             } catch (Throwable e) {
