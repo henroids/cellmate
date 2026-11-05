@@ -31,6 +31,8 @@ public final class Ui {
     static final int CHOSEN = 0xff222222;
     /** The one light grey: the selection bar, text, fills and the patches' light squares (no pure white anywhere). */
     static final int HILITE = 0xffbcbcbc;
+    /** The scroll bar's handle: the light grey, 30% darker. */
+    static final int THUMB = 0xff848484;
 
     static final int BLACK = 0xff000000, WHITE = HILITE, GREY = 0xff9a9a9a, DIM = 0xff4a4a4a, ICON = 0xff7a7a7a;
 
@@ -730,13 +732,13 @@ public final class Ui {
             if (row.box()) drawBoxRow(g, row, y, on); else drawValueRow(g, row, y, on);
         }
         g.unclip();
-        // scroll bar: dark grey track, light grey thumb, just right of the rows
+        // scroll bar: dark grey track, mid grey thumb, just right of the rows
         barW = 6 * k; barX = menuX + menuW + 8 * k; barY = menuY; barH = Math.min(menuH, visible * pitch - rowGap);
         if (r.size() > visible) {
             int thumb = Math.max(barH * visible / r.size(), 3 * k);
             int ty = barY + (barH - thumb) * scroll / (r.size() - visible);
             g.fill(barX, barY, barW, barH, CHOSEN);
-            g.fill(barX, ty, barW, thumb, HILITE);
+            g.fill(barX, ty, barW, thumb, THUMB);
             hits.add(new Hit(barX - 6 * k, barY, barW + 12 * k, barH, "", SCROLLBAR, 0));
         }
     }
