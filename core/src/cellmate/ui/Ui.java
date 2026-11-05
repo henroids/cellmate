@@ -75,6 +75,8 @@ public final class Ui {
     private String selectedKey = "Input";
     private final Map<String, Integer> section = new HashMap<>();   // focused section of a slider box
     private int scroll;
+    private boolean followSelection = true;   // scroll the selected row into view on the next draw (keys), not after the wheel
+    private int barX, barY, barW, barH, visibleRows, rowCount;   // the menu's scroll bar, for dragging it
     private boolean previewOnOtherScreen;
 
     // ---- layout of the last frame, for touch and mouse
@@ -280,6 +282,7 @@ public final class Ui {
     private void select(List<Row> r, int i) {
         Row row = r.get(i);
         selectedKey = row.key;
+        followSelection = true;
         if (row.style() != null && row.style() != page) { page = row.style(); schedulePreview(); }
     }
 
@@ -385,7 +388,7 @@ public final class Ui {
         boolean contains(int px, int py) { return px >= x && py >= y && px < x + w && py < y + h; }
     }
 
-    private static final Object ROW = new Object(), SWATCH = new Object(), PAGE_LEFT = new Object(), PAGE_RIGHT = new Object(), HELP = new Object();
+    private static final Object ROW = new Object(), SWATCH = new Object(), SCROLLBAR = new Object(), PAGE_LEFT = new Object(), PAGE_RIGHT = new Object(), HELP = new Object();
     private Hit down;
     private int downX, downY, lastY;
     private boolean dragging, sliding;
@@ -398,6 +401,7 @@ public final class Ui {
 
     public void pointerMove(int x, int y) {
         if (screen != Screen.MENU || popup != null) return;
+        if (down != null && down.what == SCROLLBAR) { scrollTo(y); return; }
         if (sliding) { slide(down, x, y); return; }
         // a sideways drag on a chosen row's bar moves its setting (a plain tap chooses or un-chooses the row)
         if (!dragging && down != null && down.what instanceof Part && Math.abs(x - downX) > 6 * k && Math.abs(x - downX) > Math.abs(y - downY)) {
@@ -416,6 +420,7 @@ public final class Ui {
         if (popup != null) { tapPopup(x, y); host.repaint(); return; }
         if (sliding || dragging) { sliding = dragging = false; host.repaint(); return; }
         if (down == null) return;
+        if (down.what == SCROLLBAR) { scrollTo(y); return; }
         if (down.what == PAGE_LEFT) { turnPage(-1); return; }
         if (down.what == PAGE_RIGHT) { turnPage(1); return; }
         if (down.what == HELP) { key((Key) helpKeys.get(down.index)); return; }
@@ -469,8 +474,33 @@ public final class Ui {
         if (i >= 0 && i < popup.length) popupChoose(i); else popup = null;
     }
 
-    /** Mouse wheel or swipe, in rows (positive = down). */
-    public void scrollBy(int rowsDelta) { scroll = Math.max(0, scroll + rowsDelta); host.repaint(); }
+    /** Swipe or drag, in rows (positive = down). The selection stays where it is. */
+    public void scrollBy(int rowsDelta) {
+        scroll = clamp(scroll + rowsDelta, 0, Math.max(0, rowCount - visibleRows));
+        followSelection = false;
+        host.repaint();
+    }
+
+    private double wheelRest;
+
+    /** Mouse wheel or touchpad (in rows, may be fractional), scrolling the menu when the pointer is over it. */
+    public void wheel(int x, int y, double rowsDelta) {
+        if (screen != Screen.MENU || popup != null) return;
+        if (x < menuX || x >= barX + barW || y < menuY || y >= menuY + menuH) return;
+        wheelRest += rowsDelta;
+        int whole = (int) wheelRest;
+        if (whole != 0) { wheelRest -= whole; scrollBy(whole); }
+    }
+
+    /** Dragging or tapping the scroll bar: centre the thumb on the pointer. */
+    private void scrollTo(int y) {
+        if (rowCount <= visibleRows || barH <= 0) return;
+        int thumb = Math.max(barH * visibleRows / rowCount, 3 * k);
+        double f = (y - barY - thumb / 2.0) / Math.max(1, barH - thumb);
+        scroll = clamp((int) Math.round(f * (rowCount - visibleRows)), 0, rowCount - visibleRows);
+        followSelection = false;
+        host.repaint();
+    }
 
     /** A tap on the second screen's preview: the arrows page through the styles. */
     public void tapPreviewScreen(int x, int y) {
@@ -651,6 +681,7 @@ public final class Ui {
             previewX = 14 * k; previewY = midY; previewW = w - 28 * k; previewH = (int) (midH * 0.42);
             menuX = 0; menuY = previewY + previewH + 10 * k; menuW = w; menuH = midH - previewH - 10 * k;
         }
+        menuW -= 14 * k;   // room for the scroll bar
         drawMenu(g);
         if (!previewOnOtherScreen) drawPreview(g, previewX, previewY, previewW, previewH);
 
@@ -682,9 +713,13 @@ public final class Ui {
         List<Row> r = rows();
         int sel = selectedIndex(r);
         int pitch = rowH + rowGap, visible = Math.max(1, (menuH + rowGap) / pitch);
-        if (sel < scroll) scroll = sel;
-        if (sel >= scroll + visible) scroll = sel - visible + 1;
+        if (followSelection) {
+            if (sel < scroll) scroll = sel;
+            if (sel >= scroll + visible) scroll = sel - visible + 1;
+            followSelection = false;
+        }
         scroll = clamp(scroll, 0, Math.max(0, r.size() - visible));
+        visibleRows = visible; rowCount = r.size();
         g.clip(menuX, menuY, menuW, menuH);
         for (int i = scroll; i < r.size() && i < scroll + visible; i++) {
             Row row = r.get(i);
@@ -695,8 +730,15 @@ public final class Ui {
             if (row.box()) drawBoxRow(g, row, y, on); else drawValueRow(g, row, y, on);
         }
         g.unclip();
-        if (scroll > 0) triangleUp(g, menuX + menuW - 10 * k, menuY - 6 * k, 4 * k, true, DIM);
-        if (scroll + visible < r.size()) triangleUp(g, menuX + menuW - 10 * k, menuY + visible * pitch - rowGap + 2 * k, 4 * k, false, DIM);
+        // scroll bar: dark grey track, light grey thumb, just right of the rows
+        barW = 6 * k; barX = menuX + menuW + 8 * k; barY = menuY; barH = Math.min(menuH, visible * pitch - rowGap);
+        if (r.size() > visible) {
+            int thumb = Math.max(barH * visible / r.size(), 3 * k);
+            int ty = barY + (barH - thumb) * scroll / (r.size() - visible);
+            g.fill(barX, barY, barW, barH, CHOSEN);
+            g.fill(barX, ty, barW, thumb, HILITE);
+            hits.add(new Hit(barX - 6 * k, barY, barW + 12 * k, barH, "", SCROLLBAR, 0));
+        }
     }
 
     private void drawValueRow(Surface g, Row row, int y, boolean on) {
@@ -1207,13 +1249,6 @@ public final class Ui {
             int len = (w - i) * 2 - 1;
             int cx = left ? x + w - 1 - i : x + i;   // tip on the pointing side
             g.fill(cx, cy - len / 2, 1, len, color);
-        }
-    }
-
-    private void triangleUp(Surface g, int cx, int y, int hgt, boolean up, int color) {
-        for (int i = 0; i < hgt; i++) {
-            int len = 2 * (up ? i : hgt - 1 - i) + 1;
-            g.fill(cx - len / 2, y + i, len, 1, color);
         }
     }
 

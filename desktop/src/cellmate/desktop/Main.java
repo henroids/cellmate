@@ -82,7 +82,7 @@ public final class Main implements Host {
         };
         panel.addMouseListener(mouse);
         panel.addMouseMotionListener(mouse);
-        panel.addMouseWheelListener(e -> ui.scrollBy(e.getWheelRotation()));
+        panel.addMouseWheelListener(e -> ui.wheel(e.getX(), e.getY(), e.getPreciseWheelRotation()));
         frame.setContentPane(panel);
         frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
         try (InputStream in = Main.class.getResourceAsStream("/icon.png")) {

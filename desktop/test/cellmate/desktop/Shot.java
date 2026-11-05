@@ -58,6 +58,9 @@ public class Shot {
             } else if (cmd.startsWith("drag")) {
                 String[] v = cmd.substring(4).split(",");
                 uiThread.submit(() -> { ui[0].pointerDown(Integer.parseInt(v[0]), Integer.parseInt(v[1])); ui[0].pointerMove(Integer.parseInt(v[2]), Integer.parseInt(v[3])); ui[0].pointerUp(Integer.parseInt(v[2]), Integer.parseInt(v[3])); }).get();
+            } else if (cmd.startsWith("wheel")) {   // wheelX,Y,ROWS
+                String[] v = cmd.substring(5).split(",");
+                uiThread.submit(() -> ui[0].wheel(Integer.parseInt(v[0]), Integer.parseInt(v[1]), Double.parseDouble(v[2]))).get();
             } else if (cmd.startsWith("tap")) {
                 String[] xy = cmd.substring(3).split(",");
                 uiThread.submit(() -> ui[0].tap(Integer.parseInt(xy[0]), Integer.parseInt(xy[1]))).get();
