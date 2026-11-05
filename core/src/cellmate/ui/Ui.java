@@ -224,7 +224,7 @@ public final class Ui {
         r.add(new SliderRow("Detail", part("Detail", Settings.DETAIL.length, () -> Settings.nearest(Settings.DETAIL, s.cells),
                 v -> s.cells = Settings.DETAIL[v], v -> Settings.DETAIL[v] + " across"), () -> s.cells + " across", "160 across"));
         r.add(new SliderRow("Pixel", part("Pixel size", Settings.PIXEL.length, () -> Settings.nearest(Settings.PIXEL, s.cellSize),
-                v -> s.cellSize = Settings.PIXEL[v], v -> Settings.PIXEL[v] + " px"), () -> s.cellSize + " px", "56 px"));
+                v -> s.cellSize = Settings.PIXEL[v], v -> Settings.PIXEL[v] + " px  =  " + (s.cells * Settings.PIXEL[v]) + " px pictures"), () -> s.cellSize + " px", "56 px"));
         for (Style st : Style.values()) r.add(new StyleRow(st));
         r.add(new Row("Greyscale", "Greyscale") {
             final List<Part> p = Collections.singletonList(part("Grey tones", 7, () -> s.greyTones - 2, v -> s.greyTones = v + 2, v -> (v + 2) + " tones"));
@@ -675,7 +675,9 @@ public final class Ui {
         top = fitText(g, top, w / 2, t);
         g.text(top, w - 14 * k - g.textWidth(top, t), 8 * k, t, GREY);
 
-        int topH = t + 18 * k, bottomH = t + 20 * k;
+        // upright screens put the status message on its own line above the button hints
+        boolean tall = w < h;
+        int topH = t + 18 * k, bottomH = t + 20 * k + (tall ? t + 8 * k : 0);
         int midY = topH, midH = h - topH - bottomH;
 
         if (screen != Screen.MENU) {
@@ -698,7 +700,6 @@ public final class Ui {
         drawMenu(g);
         if (!previewOnOtherScreen) drawPreview(g, previewX, previewY, previewW, previewH);
 
-        g.text(fitText(g, message, w / 2, t), 14 * k, h - bottomH + 6 * k, t, GREY);
         List<Row> r = rows();
         Row row = r.get(selectedIndex(r));
         List<Object> help = new ArrayList<>();
@@ -708,7 +709,10 @@ public final class Ui {
         if (saves) help.addAll(Arrays.asList("X", "Save", Key.SAVE));
         help.addAll(Arrays.asList("Y", "Reset", Key.RESET));
         if (!saves) help.addAll(Arrays.asList("B", "Back", Key.B));
-        drawHelp(g, w, h, help.toArray());
+        int helpLeft = drawHelp(g, w, h, help.toArray());
+        // the status message: beside the hints on wide screens, on its own line above them on tall ones
+        int room = tall ? w - 28 * k : helpLeft - 14 * k - 24 * k;
+        g.text(fitText(g, message, room, t), 14 * k, h - bottomH + 6 * k, t, GREY);
         if (popup != null) drawPopup(g, w, h);
     }
 
@@ -990,7 +994,7 @@ public final class Ui {
 
     /** A sample of a style at the real pixel size (smaller only if two pixels wouldn't fit), in the current tones. */
     private Object stylePatch(Style st, int pw, int ph) {
-        int cell = Math.max(2, ph / 4);   // a fixed close-up, whatever the pixel size
+        int cell = Math.max(2, ph / 2);   // a close-up: two rows of cells, whatever the pixel size
         // always the same white and dark grey: the patch shows what the settings do, never the mode's colours
         int[] values = {WHITE, CHOSEN};   // the app's one light grey and one dark grey
         String key = "style|" + st + "|" + pw + "x" + ph + "|" + cell + "|" + Arrays.toString(values) + "|" + Arrays.toString(s.knob[st.ordinal()]);
@@ -1214,7 +1218,8 @@ public final class Ui {
     private final List<Object> helpKeys = new ArrayList<>();
 
     /** Button hints, bottom right: glyph, label, key (tappable). */
-    private void drawHelp(Surface g, int w, int h, Object[] items3) {
+    /** The button hints along the bottom right; returns where they start on the left. */
+    private int drawHelp(Surface g, int w, int h, Object[] items3) {
         int y = h - (t + 20 * k) + 4 * k + (t + 4 * k) / 2;
         int x = w - 14 * k;
         int d = t + 2 * k;
@@ -1241,6 +1246,7 @@ public final class Ui {
             hits.add(new Hit(x, y - d / 2, right - x, d, "", HELP, helpKeys.size() - 1));
             x -= 18 * k;
         }
+        return x + 18 * k;
     }
 
     // ------------------------------------------------------------------ pixel shapes
