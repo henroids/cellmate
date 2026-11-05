@@ -64,7 +64,7 @@ public final class Engine {
         int[] values = greyValues(n);
         int[] color = new int[q.length];
         for (int i = 0; i < q.length; i++) { int v = values[q[i]]; color[i] = 0xff000000 | (v << 16) | (v << 8) | v; }
-        if (s.accent > 0) applyAccent(p, s, cols, rows, color);
+        if (s.accent) applyAccent(p, s, cols, rows, color);
         return new Grid(cols, rows, color);
     }
 
@@ -268,7 +268,14 @@ public final class Engine {
         return cent;
     }
 
-    static float[] hsv(int argb) {
+    public static int fromHsv(float h, float sat, float v) {
+        float c = v * sat, x = c * (1 - Math.abs((h / 60f) % 2 - 1)), m = v - c, r, g, b;
+        if (h < 60) { r = c; g = x; b = 0; } else if (h < 120) { r = x; g = c; b = 0; } else if (h < 180) { r = 0; g = c; b = x; }
+        else if (h < 240) { r = 0; g = x; b = c; } else if (h < 300) { r = x; g = 0; b = c; } else { r = c; g = 0; b = x; }
+        return 0xff000000 | Math.round((r + m) * 255) << 16 | Math.round((g + m) * 255) << 8 | Math.round((b + m) * 255);
+    }
+
+    public static float[] hsv(int argb) {
         float r = ((argb >> 16) & 255) / 255f, g = ((argb >> 8) & 255) / 255f, b = (argb & 255) / 255f;
         float max = Math.max(r, Math.max(g, b)), min = Math.min(r, Math.min(g, b)), d = max - min, h;
         if (d == 0) h = 0;
@@ -288,41 +295,67 @@ public final class Engine {
         public Image(int width, int height, int[] argb) { this.width = width; this.height = height; this.argb = argb; }
     }
 
-    public static Image draw(Grid g, Settings.Style style, int cellSize) {
+    /** Draws with each style's default knobs. */
+    public static Image draw(Grid g, Settings.Style style, int cellSize) { return draw(g, style, cellSize, new Settings()); }
+
+    public static Image draw(Grid g, Settings.Style style, int cellSize, Settings s) {
         switch (style) {
-            case SOLID: return solid(g, cellSize);
-            case STITCH: case BEADS: return stamps(g, cellSize, stamp(style, cellSize));
-            case MELTED: return melted(g, cellSize);
-            default: return blocks(g, cellSize, style);
+            case SOLID: return solid(g, cellSize, s.value(style, 0), s.value(style, 1));
+            case STITCH: case BEADS: return stamps(g, cellSize, stamp(style, cellSize, s));
+            case MELTED: return melted(g, cellSize, s);
+            default: return blocks(g, cellSize, style, s.value(style, 0));
         }
     }
 
-    private static Image solid(Grid g, int c) {
+    /**
+     * Solid squares. Light and dark squares can be drawn smaller than their cell (on black);
+     * tones in between get an in-between size. Both at full size is the plain solid look.
+     */
+    private static Image solid(Grid g, int c, double light, double dark) {
         int w = g.cols * c, h = g.rows * c;
         int[] out = new int[w * h];
-        for (int y = 0; y < h; y++) {
-            int row = (y / c) * g.cols;
-            for (int x = 0; x < w; x++) out[y * w + x] = g.color[row + x / c];
+        if (light >= 1.0 && dark >= 1.0) {
+            for (int y = 0; y < h; y++) {
+                int row = (y / c) * g.cols;
+                for (int x = 0; x < w; x++) out[y * w + x] = g.color[row + x / c];
+            }
+            return new Image(w, h, out);
+        }
+        java.util.Arrays.fill(out, 0xff000000);
+        for (int r = 0; r < g.rows; r++) for (int k = 0; k < g.cols; k++) {
+            int col = g.color[r * g.cols + k];
+            double lum = (0.299 * ((col >> 16) & 255) + 0.587 * ((col >> 8) & 255) + 0.114 * (col & 255)) / 255.0;
+            int side = Math.max(1, (int) Math.round(c * (dark + (light - dark) * lum)));
+            int off = (c - side) / 2;
+            for (int y = 0; y < side; y++) {
+                int base = (r * c + off + y) * w + k * c + off;
+                java.util.Arrays.fill(out, base, base + side, col);
+            }
         }
         return new Image(w, h, out);
     }
 
-    public static boolean[] stamp(Settings.Style style, int c) {
-        boolean[] s = new boolean[c * c];
-        if (style == Settings.Style.BEADS) {
+    /** The default stitch (X) or bead (O) shape, c pixels square: the logo's shapes. */
+    public static boolean[] stamp(Settings.Style style, int c) { return stamp(style, c, new Settings()); }
+
+    public static boolean[] stamp(Settings.Style style, int c, Settings s) {
+        boolean[] out = new boolean[c * c];
+        if (style == Settings.Style.BEADS || style == Settings.Style.MELTED) {
+            double outer = s.value(style, 0), hole = Math.min(s.value(style, 1), outer - 0.12);
             double centre = (c - 1) / 2.0;
             for (int y = 0; y < c; y++) for (int x = 0; x < c; x++) {
                 double d = Math.hypot(x - centre, y - centre);
-                s[y * c + x] = d <= c / 2.0 - 0.35 && d >= c * 0.17;
+                out[y * c + x] = d <= c * outer - 0.35 && d >= c * hole;
             }
-        } else {   // cross stitch in the logo's proportions
-            int m = (int) Math.rint(c / 24.0), k = Math.max(0, (int) Math.rint(c * 4 / 24.0));
+        } else {   // cross stitch; thickness in twenty-fourths of a cell (default 4, the logo's)
+            int n = (int) s.value(Settings.Style.STITCH, 0);
+            int m = (int) Math.rint(c / 24.0), k = Math.max(0, (int) Math.rint(c * n / 24.0));
             for (int y = 0; y < c; y++) for (int x = 0; x < c; x++) {
                 boolean inside = x >= m && x < c - m && y >= m && y < c - m;
-                s[y * c + x] = inside && (Math.abs(x - y) <= k || Math.abs(x + y - (c - 1)) <= k);
+                out[y * c + x] = inside && (Math.abs(x - y) <= k || Math.abs(x + y - (c - 1)) <= k);
             }
         }
-        return s;
+        return out;
     }
 
     private static Image stamps(Grid g, int c, boolean[] stamp) {
@@ -336,29 +369,39 @@ public final class Engine {
         return new Image(w, h, out);
     }
 
-    private static Image melted(Grid g, int c) {
-        int rows = g.rows, cols = g.cols, n = c + 4, pad = 2;
+    /**
+     * Beads with some of them melted by the iron. The melt level (1-5) melts more of them, a
+     * little more each; rotation turns the melted shapes.
+     */
+    private static Image melted(Grid g, int c, Settings s) {
+        Settings.Style st = Settings.Style.MELTED;
+        double outerF = s.value(st, 0), holeF = Math.min(s.value(st, 1), outerF - 0.12);
+        double turn = Math.toRadians(s.value(st, 2));
+        int level = (int) s.value(st, 3);
+        double share = 0.35 + 0.08 * (level - 1), strength = 1 + 0.3 * (level - 1);
+        int rows = g.rows, cols = g.cols, pad = 2 + (level - 1), n = c + 2 * pad;
         int W = cols * c + 2 * pad, H = rows * c + 2 * pad;
         int[] out = new int[W * H];
         java.util.Arrays.fill(out, 0xff000000);
         Random rnd = new Random(7);
         double[] melt = new double[rows * cols];
         for (int i = 0; i < melt.length; i++) {
-            boolean m = rnd.nextDouble() < 0.35;
+            boolean m = rnd.nextDouble() < share;
             double amount = 0.3 + 0.7 * rnd.nextDouble();
-            melt[i] = m ? amount : 0;
+            melt[i] = m ? amount * strength : 0;
         }
         double centre = (n - 1) / 2.0;
         boolean[] plain = new boolean[n * n];
         for (int y = 0; y < n; y++) for (int x = 0; x < n; x++) {
             double d = Math.hypot(x - centre, y - centre);
-            plain[y * n + x] = d <= c / 2.0 - 0.35 && d >= c * 0.17;
+            plain[y * n + x] = d <= c * outerF - 0.35 && d >= c * holeF;
         }
         // Plain beads first, melted ones on top (they may spread a little past their cell).
         Integer[] order = new Integer[melt.length];
         for (int i = 0; i < order.length; i++) order[i] = i;
         java.util.Arrays.sort(order, (a, b) -> Double.compare(melt[a], melt[b]));
         boolean[] shape = new boolean[n * n];
+        double cos = Math.cos(turn), sin = Math.sin(turn);
         for (int idx : order) {
             int col = g.color[idx];
             if (col == Grid.EMPTY) continue;
@@ -367,18 +410,19 @@ public final class Engine {
             boolean[] sh = plain;
             if (m > 0) {
                 double p1 = rnd.nextDouble() * 2 * Math.PI, p2 = rnd.nextDouble() * 2 * Math.PI;
-                double hx = (rnd.nextDouble() * 2 - 1) * m * c * 0.06, hy = (rnd.nextDouble() * 2 - 1) * m * c * 0.06;
-                double hole = c * 0.17 * (1 - 0.45 * m);
+                double ox = (rnd.nextDouble() * 2 - 1) * m * c * 0.06, oy = (rnd.nextDouble() * 2 - 1) * m * c * 0.06;
+                double hx = ox * cos - oy * sin, hy = ox * sin + oy * cos;
+                double hole = c * holeF * (1 - 0.45 * Math.min(1.0, m));
                 for (int y = 0; y < n; y++) for (int x = 0; x < n; x++) {
-                    double dx = x - centre, dy = y - centre, a = Math.atan2(dy, dx);
-                    double outer = (c / 2.0 - 0.35 + m * 0.9) * (1 + m * (0.07 * Math.sin(2 * a + p1) + 0.05 * Math.sin(3 * a + p2)));
+                    double dx = x - centre, dy = y - centre, a = Math.atan2(dy, dx) - turn;
+                    double outer = (c * outerF - 0.35 + m * 0.9) * (1 + m * (0.07 * Math.sin(2 * a + p1) + 0.05 * Math.sin(3 * a + p2)));
                     shape[y * n + x] = Math.hypot(dx, dy) <= outer && Math.hypot(dx - hx, dy - hy) >= hole;
                 }
                 sh = shape;
             }
             for (int y = 0; y < n; y++) {
-                int oy = r * c + y;
-                for (int x = 0; x < n; x++) if (sh[y * n + x]) out[oy * W + k * c + x] = col;
+                int oy2 = r * c + y;
+                for (int x = 0; x < n; x++) if (sh[y * n + x]) out[oy2 * W + k * c + x] = col;
             }
         }
         int w = cols * c, h = rows * c;
@@ -391,14 +435,14 @@ public final class Engine {
      * Border, rounded and jitter: squares drawn 4x larger on a grey background, then scaled down
      * with Lanczos (as pixel_crt.py does). Streamed a few rows at a time to keep memory small.
      */
-    private static Image blocks(Grid g, int cellSize, Settings.Style style) {
+    private static Image blocks(Grid g, int cellSize, Settings.Style style, double amount) {
         final int c = cellSize * SUPERSAMPLE, cols = g.cols, rows = g.rows;
         final int W = cols * c, H = rows * c, w = cols * cellSize, h = rows * cellSize;
-        final double inset = style == Settings.Style.BORDER ? 0.045 : style == Settings.Style.JITTER ? 0.03 : 0.0;
+        final double inset = style == Settings.Style.BORDER ? amount : style == Settings.Style.JITTER ? 0.03 : 0.0;
         double[] jitter = new double[rows * cols];
         if (style == Settings.Style.JITTER) {
             Random rnd = new Random(7);
-            for (int i = 0; i < jitter.length; i++) jitter[i] = -0.05 + 0.1 * rnd.nextDouble();
+            for (int i = 0; i < jitter.length; i++) jitter[i] = amount * (2 * rnd.nextDouble() - 1);
         }
         // Per cell: inclusive rectangle in supersampled pixels (Pillow truncates the corners).
         int[] x0 = new int[rows * cols], x1 = new int[rows * cols], y0 = new int[rows * cols], y1 = new int[rows * cols];
@@ -408,7 +452,7 @@ public final class Engine {
             x0[i] = (int) (x * c + m); y0[i] = (int) (y * c + m);
             x1[i] = (int) ((x + 1) * c - m - 1); y1[i] = (int) ((y + 1) * c - m - 1);
         }
-        final boolean[] round = style == Settings.Style.ROUNDED ? roundedMask(c, 0.2 * c) : null;
+        final boolean[] round = style == Settings.Style.ROUNDED ? roundedMask(c, amount) : null;
 
         int[] bx = new int[2 * w], by = new int[2 * h];
         int[][] kx = coeffs(W, w, bx), ky = coeffs(H, h, by);
@@ -496,11 +540,11 @@ public final class Engine {
      * stored here: per supersampled cell size (4..160 in steps of 4), the left/right insets of
      * the top rows and of the bottom rows (bottom-up). Rows not listed are full width.
      */
-    private static boolean[] roundedMask(int c, double radiusUnused) {
+    private static boolean[] roundedMask(int c, double frac) {
         boolean[] m = new boolean[c * c];
         java.util.Arrays.fill(m, true);
         int idx = c / 4 - 1;
-        if (c % 4 != 0 || idx < 0 || idx >= ROUNDED.length) return m;
+        if (frac != 0.2 || c % 4 != 0 || idx < 0 || idx >= ROUNDED.length) return circleCorners(c, frac);
         String[] halves = ROUNDED[idx].split("\\|", -1);
         for (int half = 0; half < 2; half++) {
             if (halves[half].isEmpty()) continue;
@@ -511,6 +555,20 @@ public final class Engine {
                 int y = half == 0 ? i : c - 1 - i;
                 for (int x = 0; x < c; x++) m[y * c + x] = x >= l && x <= c - 1 - r;
             }
+        }
+        return m;
+    }
+
+    /** Rounded corners for other roundness settings: quarter circles of radius frac * cell. */
+    private static boolean[] circleCorners(int c, double frac) {
+        int r = (int) (frac * c * 2) / 2;
+        boolean[] m = new boolean[c * c];
+        int last = c - 1;
+        for (int y = 0; y < c; y++) for (int x = 0; x < c; x++) {
+            int cx = x < r ? r : x > last - r ? last - r : x;
+            int cy = y < r ? r : y > last - r ? last - r : y;
+            double dx = x - cx, dy = y - cy;
+            m[y * c + x] = dx * dx + dy * dy <= (r + 0.5) * (r + 0.5);
         }
         return m;
     }

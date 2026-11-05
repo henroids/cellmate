@@ -64,13 +64,20 @@ public final class Main implements Host {
                     case KeyEvent.VK_RIGHT: case KeyEvent.VK_D: ui.key(Ui.Key.RIGHT); break;
                     case KeyEvent.VK_ENTER: case KeyEvent.VK_SPACE: ui.key(Ui.Key.A); break;
                     case KeyEvent.VK_ESCAPE: case KeyEvent.VK_BACK_SPACE: ui.key(Ui.Key.B); break;
+                    case KeyEvent.VK_TAB: ui.key(e.isShiftDown() ? Ui.Key.PREV : Ui.Key.NEXT); break;
+                    case KeyEvent.VK_Q: case KeyEvent.VK_PAGE_UP: ui.key(Ui.Key.PREV); break;
+                    case KeyEvent.VK_E: case KeyEvent.VK_PAGE_DOWN: ui.key(Ui.Key.NEXT); break;
                     default: break;
                 }
             }
         });
-        panel.addMouseListener(new MouseAdapter() {
-            @Override public void mousePressed(MouseEvent e) { panel.requestFocusInWindow(); ui.tap(e.getX(), e.getY()); }
-        });
+        MouseAdapter mouse = new MouseAdapter() {
+            @Override public void mousePressed(MouseEvent e) { panel.requestFocusInWindow(); ui.pointerDown(e.getX(), e.getY()); }
+            @Override public void mouseDragged(MouseEvent e) { ui.pointerMove(e.getX(), e.getY()); }
+            @Override public void mouseReleased(MouseEvent e) { ui.pointerUp(e.getX(), e.getY()); }
+        };
+        panel.addMouseListener(mouse);
+        panel.addMouseMotionListener(mouse);
         panel.addMouseWheelListener(e -> ui.scrollBy(e.getWheelRotation()));
         frame.setContentPane(panel);
         frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
@@ -87,9 +94,16 @@ public final class Main implements Host {
 
     // ------------------------------------------------------------------ Host
 
+    @Override public boolean canPickEither() { return true; }
+
     @Override public void pick(Ui.Pick kind) {
         JFileChooser fc = new JFileChooser();
-        if (kind == Ui.Pick.INPUT_IMAGE) {
+        if (kind == Ui.Pick.INPUT) {
+            fc.setFileSelectionMode(JFileChooser.FILES_AND_DIRECTORIES);
+            fc.addChoosableFileFilter(new FileNameExtensionFilter("Folders and images", Plan.EXTENSIONS.toArray(new String[0])));
+            fc.setAcceptAllFileFilterUsed(false);
+            fc.setDialogTitle("Choose a folder of images, or one image");
+        } else if (kind == Ui.Pick.INPUT_IMAGE) {
             fc.setFileSelectionMode(JFileChooser.FILES_ONLY);
             fc.setFileFilter(new FileNameExtensionFilter("Images", Plan.EXTENSIONS.toArray(new String[0])));
             fc.setDialogTitle("Choose an image");
@@ -99,7 +113,8 @@ public final class Main implements Host {
         }
         if (fc.showOpenDialog(frame) == JFileChooser.APPROVE_OPTION) {
             File f = fc.getSelectedFile();
-            ui.picked(kind, f, f.getName().isEmpty() ? f.getPath() : f.getName());
+            Ui.Pick k = kind == Ui.Pick.INPUT ? (f.isDirectory() ? Ui.Pick.INPUT_FOLDER : Ui.Pick.INPUT_IMAGE) : kind;
+            ui.picked(k, f, f.getName().isEmpty() ? f.getPath() : f.getName());
         }
         panel.requestFocusInWindow();
     }

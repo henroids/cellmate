@@ -10,7 +10,7 @@ public class EngineCheck {
         for (int i = 0; i < px.length; i++) px[i] = 0xff000000 | (in.readUnsignedByte() << 16) | (in.readUnsignedByte() << 8) | in.readUnsignedByte();
         Settings s = new Settings();
         s.greyTones = Integer.parseInt(a[3]); s.cells = Integer.parseInt(a[4]); s.cellSize = Integer.parseInt(a[5]);
-        if (a.length > 6) { s.color = a[6].equals("color"); if (!s.color && !a[6].equals("grey")) s.accent = Integer.parseInt(a[6]); }
+        if (a.length > 6) { s.color = a[6].equals("color"); if (!s.color && !a[6].equals("grey")) { s.accent = true; s.swatch = Integer.parseInt(a[6]); } }
         if (a.length > 7) s.colors = Integer.parseInt(a[7]);
         Picture p = new Picture(w, h, px);
         long t = System.nanoTime();

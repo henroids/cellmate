@@ -18,6 +18,7 @@ public class Shot {
         final Ui[] ui = new Ui[1];
         Host host = new Host() {
             public void pick(Ui.Pick kind) { }
+            public boolean canPickEither() { return true; }
             public List<String> listImages(Object in, boolean folder) throws Exception { return files.listImages(in, folder); }
             public Picture decode(Object in, boolean folder, String rel) throws Exception { return files.decode(in, folder, rel); }
             public boolean exists(Object out, String rel) { return files.exists(out, rel); }
@@ -54,6 +55,9 @@ public class Shot {
                 ImageIO.write(img, "png", new File(a[0], "shot" + (shot++) + ".png"));
             } else if (cmd.startsWith("wait")) {
                 Thread.sleep(Long.parseLong(cmd.substring(4)));
+            } else if (cmd.startsWith("drag")) {
+                String[] v = cmd.substring(4).split(",");
+                uiThread.submit(() -> { ui[0].pointerDown(Integer.parseInt(v[0]), Integer.parseInt(v[1])); ui[0].pointerMove(Integer.parseInt(v[2]), Integer.parseInt(v[3])); ui[0].pointerUp(Integer.parseInt(v[2]), Integer.parseInt(v[3])); }).get();
             } else if (cmd.startsWith("tap")) {
                 String[] xy = cmd.substring(3).split(",");
                 uiThread.submit(() -> ui[0].tap(Integer.parseInt(xy[0]), Integer.parseInt(xy[1]))).get();

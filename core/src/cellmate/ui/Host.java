@@ -9,8 +9,13 @@ import java.util.List;
  * the desktop, a content Uri on Android); the UI only passes them back.
  */
 public interface Host {
-    /** Opens a picker; the host later calls ui.picked(kind, place, displayName). */
+    /**
+     * Opens a picker; the host later calls ui.picked(kind, place, displayName). For Pick.INPUT
+     * (only asked when canPickEither()) the host reports INPUT_FOLDER or INPUT_IMAGE.
+     */
     void pick(Ui.Pick kind);
+    /** True if one picker can choose either a folder or a single image (desktop). */
+    boolean canPickEither();
     /** All images under a folder (or just the file itself), as relative paths with '/' separators. */
     List<String> listImages(Object input, boolean folder) throws Exception;
     Picture decode(Object input, boolean folder, String relPath) throws Exception;

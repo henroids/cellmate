@@ -64,24 +64,12 @@ public final class MainActivity extends Activity implements Host {
         };
         view.setFocusable(true);
         view.setDefaultFocusHighlightEnabled(false);
-        view.setOnTouchListener(new View.OnTouchListener() {
-            float downY, lastY; boolean dragging;
-            @Override public boolean onTouch(View v, MotionEvent e) {
-                float step = 28 * Math.max(1, Math.round(v.getHeight() / 540f));   // about one row
-                switch (e.getActionMasked()) {
-                    case MotionEvent.ACTION_DOWN: downY = lastY = e.getY(); dragging = false; return true;
-                    case MotionEvent.ACTION_MOVE:
-                        if (Math.abs(e.getY() - downY) > step / 2) dragging = true;
-                        if (dragging) {
-                            int rows = (int) ((lastY - e.getY()) / step);
-                            if (rows != 0) { ui.scrollBy(rows); lastY -= rows * step; }
-                        }
-                        return true;
-                    case MotionEvent.ACTION_UP:
-                        if (!dragging) ui.tap((int) e.getX(), (int) e.getY());
-                        return true;
-                    default: return true;
-                }
+        view.setOnTouchListener((v, e) -> {
+            switch (e.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN: ui.pointerDown((int) e.getX(), (int) e.getY()); return true;
+                case MotionEvent.ACTION_MOVE: ui.pointerMove((int) e.getX(), (int) e.getY()); return true;
+                case MotionEvent.ACTION_UP: ui.pointerUp((int) e.getX(), (int) e.getY()); return true;
+                default: return true;
             }
         });
         setContentView(view);
@@ -115,8 +103,8 @@ public final class MainActivity extends Activity implements Host {
             case KeyEvent.KEYCODE_DPAD_RIGHT: k = Ui.Key.RIGHT; break;
             case KeyEvent.KEYCODE_BUTTON_A: case KeyEvent.KEYCODE_DPAD_CENTER: case KeyEvent.KEYCODE_ENTER: case KeyEvent.KEYCODE_BUTTON_START: k = Ui.Key.A; break;
             case KeyEvent.KEYCODE_BUTTON_B: case KeyEvent.KEYCODE_BACK: k = Ui.Key.B; break;
-            case KeyEvent.KEYCODE_BUTTON_L1: ui.scrollBy(-5); return true;
-            case KeyEvent.KEYCODE_BUTTON_R1: ui.scrollBy(5); return true;
+            case KeyEvent.KEYCODE_BUTTON_L1: case KeyEvent.KEYCODE_BUTTON_X: k = Ui.Key.PREV; break;
+            case KeyEvent.KEYCODE_BUTTON_R1: case KeyEvent.KEYCODE_BUTTON_Y: k = Ui.Key.NEXT; break;
             default: return super.onKeyDown(code, e);
         }
         ui.key(k);
@@ -156,6 +144,8 @@ public final class MainActivity extends Activity implements Host {
     }
 
     // ------------------------------------------------------------------ pickers
+
+    @Override public boolean canPickEither() { return false; }
 
     @Override public void pick(Ui.Pick kind) {
         Intent i;
