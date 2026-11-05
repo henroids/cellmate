@@ -15,7 +15,7 @@ Every change is built automatically. Open **Releases → Cellmate (latest build)
 
 - **Input folder** or **Input image**: what to convert. Folders include all subfolders.
 - **Output folder**: where the results go.
-- Turn on any number of styles. Each style gets its own folder, named after the input plus the
+- Styles: each has an O on the left; select it and a red X marks it as going to the output. Choose any number. Each style gets its own folder, named after the input plus the
   style: converting `summer 96` with Rounded and Melted makes `summer 96 rounded` and
   `summer 96 melted`, each with the same subfolders and the same file names (as .png).
   A single image goes into a folder named after the style (`melted/beach.png`).

@@ -19,6 +19,9 @@ public final class Ui {
     public enum Pick { INPUT_FOLDER, INPUT_IMAGE, OUTPUT }
     public enum Key { UP, DOWN, LEFT, RIGHT, A, B }
 
+    /** The logo's colours, used for the style marks: O = selectable, red X over it = chosen. */
+    static final int MARK_WHITE = 0xffb3b3b3, MARK_RED = 0xffb52a2e;
+
     static final int BLACK = 0xff000000, WHITE = 0xfffafafa, GREY = 0xff9a9a9a, DIM = 0xff4a4a4a, ICON = 0xff7a7a7a;
 
     private final Host host;
@@ -94,7 +97,7 @@ public final class Ui {
             }, null));
         r.add(new Row("Zoom", "Preview zoom", () -> zoom ? "1:1" : "Fit", d -> { zoom = !zoom; changed(); }, null));
         for (Style st : Style.values())
-            r.add(new Row("style:" + st.name(), st.label, () -> styleOn[st.ordinal()] ? "On" : "Off",
+            r.add(new Row("style:" + st.name(), st.label, () -> styleOn[st.ordinal()] ? "on" : "off",
                     d -> { styleOn[st.ordinal()] = !styleOn[st.ordinal()]; previewStyle = st; changed(); }, null));
         r.add(new Row("Mode", "Mode", () -> s.color ? "Color" : "Greyscale", d -> { s.color = !s.color; changed(); }, null));
         if (s.color)
@@ -177,7 +180,7 @@ public final class Ui {
         if (!row.key.equals(selectedKey)) { select(r, idx); host.repaint(); return; }
         if (row.change != null) {
             // Second tap: on the left arrow (or just left of the value) lowers, anywhere else raises.
-            row.change.accept(x >= leftArrowX - 6 * k && x < valueMidX ? -1 : 1);
+            row.change.accept(leftArrowX >= 0 && x >= leftArrowX - 6 * k && x < valueMidX ? -1 : 1);
         } else if (row.activate != null) {
             row.activate.run();
         }
@@ -411,9 +414,23 @@ public final class Ui {
             boolean on = i == sel;
             if (on) g.fill(menuX, y, menuW, rowH, WHITE);
             int ty = y + (rowH - t) / 2;
+            int right = menuX + menuW - 14 * k;
+            if (row.key.startsWith("style:")) {
+                // Selectable style: an O on the left; a bigger red X over it when it's chosen for output.
+                int box = t, cx = menuX + 10 * k + box / 2, cy = y + rowH / 2;
+                int o = (box * 3 / 4) | 1, xs = (box * 5 / 4) | 1;
+                stamp(g, Style.BEADS, cx - o / 2, cy - o / 2, o, on ? BLACK : MARK_WHITE);
+                if (row.value.get().equals("on")) cross(g, cx - xs / 2, cy - xs / 2, xs, MARK_RED);
+                g.text(row.label, menuX + 10 * k + box + 12 * k, ty, t, on ? BLACK : WHITE);
+                // Sample patch: a few pixels drawn exactly as this style will draw them.
+                int ph = rowH - 6 * k, pw = ph * 5 / 2;
+                g.fill(right - pw - k, y + 2 * k, pw + 2 * k, ph + 2 * k, on ? BLACK : DIM);
+                g.image(patch(Style.valueOf(row.key.substring(6)), pw, ph), right - pw, y + 3 * k);
+                if (on) { leftArrowX = -1; valueMidX = -1; }
+                continue;
+            }
             g.text(row.label, menuX + 10 * k, ty, t, on ? BLACK : WHITE);
             String v = row.value.get();
-            int right = menuX + menuW - 14 * k;
             int labelEnd = menuX + 10 * k + g.textWidth(row.label, t) + 16 * k;
             boolean arrows = on && row.change != null;
             int arrowW = arrows ? 6 * k : 0, gap = arrows ? 6 * k : 0;
@@ -421,14 +438,6 @@ public final class Ui {
             int vw = g.textWidth(v, t);
             int vx = right - vw - (arrowW + gap);
             g.text(v, vx, ty, t, on ? BLACK : GREY);
-            if (row.key.startsWith("style:")) {
-                // Sample patch: a few pixels drawn exactly as this style will draw them.
-                int ph = rowH - 6 * k, pw = ph * 5 / 2;
-                int px = right - g.textWidth("Off", t) - 24 * k - 12 * k - pw;   // fixed spot, arrows or not
-                Object patch = patch(Style.valueOf(row.key.substring(6)), pw, ph);
-                g.fill(px - k, y + 2 * k, pw + 2 * k, ph + 2 * k, on ? BLACK : DIM);
-                g.image(patch, px, y + 3 * k);
-            }
             if (on) { leftArrowX = vx - gap - arrowW; valueMidX = vx + vw / 2; }
             if (arrows) {
                 int cy = y + rowH / 2;
@@ -549,6 +558,30 @@ public final class Ui {
         int[] out = new int[v.size()];
         for (int i = 0; i < out.length; i++) out[i] = v.get(i);
         return out;
+    }
+
+    /** A slimmer X than the stitch shape, so the O under it still shows. */
+    private void cross(Surface g, int x, int y, int d, int color) {
+        int half = Math.max(1, Math.round(d / 13f));
+        for (int yy = 0; yy < d; yy++) {
+            int a = yy, b = d - 1 - yy;   // centres of the two strokes on this row
+            g.fill(x + Math.max(0, a - half), y + yy, Math.min(d, a + half + 1) - Math.max(0, a - half), 1, color);
+            g.fill(x + Math.max(0, b - half), y + yy, Math.min(d, b + half + 1) - Math.max(0, b - half), 1, color);
+        }
+    }
+
+    /** A bead (O) or cross stitch (X) shape, d pixels square, drawn pixel-exact. */
+    private void stamp(Surface g, Style shape, int x, int y, int d, int color) {
+        boolean[] m = Engine.stamp(shape, d);
+        for (int yy = 0; yy < d; yy++) {
+            int xx = 0;
+            while (xx < d) {
+                if (!m[yy * d + xx]) { xx++; continue; }
+                int start = xx;
+                while (xx < d && m[yy * d + xx]) xx++;
+                g.fill(x + start, y + yy, xx - start, 1, color);
+            }
+        }
     }
 
     private void triangle(Surface g, int x, int cy, int w, boolean left, int color) {
