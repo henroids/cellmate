@@ -100,23 +100,28 @@ public final class Engine {
         return out;
     }
 
-    /** Colour splash: cells whose colour is close to the accent hue get the accent colour. */
+    /**
+     * Accent: a pop of colour on the highlights. The lightest cells of the photo, the share the
+     * amount asks for, take the accent colour whatever colour they were; every accent colour lands
+     * on the same cells. Lone specks are left alone.
+     */
     private static void applyAccent(Picture p, Settings s, int cols, int rows, int[] color) {
         int[][] rgb = boxRgb(p, cols, rows);
-        float hue = s.accentHue(), range = Settings.RANGE_DEGREES[s.accentRange];
-        int ink = s.accentColor();
-        boolean[] hit = new boolean[color.length];
-        for (int i = 0; i < color.length; i++) {
-            float[] hsv = hsv(0xff000000 | (rgb[0][i] << 16) | (rgb[1][i] << 8) | rgb[2][i]);
-            float d = Math.abs(hsv[0] - hue);
-            d = Math.min(d, 360 - d);
-            hit[i] = d <= range && hsv[1] >= Settings.ACCENT_MIN_SAT[s.accentRange] && hsv[2] >= Settings.ACCENT_MIN_VAL[s.accentRange];
-        }
+        int n = color.length;
+        int[] light = new int[n], count = new int[256];
+        for (int i = 0; i < n; i++) count[light[i] = (rgb[0][i] * 299 + rgb[1][i] * 587 + rgb[2][i] * 114) / 1000]++;
+        // the lightness above which the wanted share of cells lies
+        int want = (int) Math.round(n * Settings.ACCENT_SHARE[s.accentRange]), above = 0, cut = 256;
+        while (cut > 0 && above + count[cut - 1] <= want) above += count[--cut];
+        if (above == 0 && cut > 0) cut--;   // always at least the very lightest cells
+        boolean[] hit = new boolean[n];
+        for (int i = 0; i < n; i++) hit[i] = light[i] >= cut;
+        int ink = Settings.SWATCHES[s.swatch];
         for (int y = 0; y < rows; y++) {
             for (int x = 0; x < cols; x++) {
                 int i = y * cols + x;
                 if (!hit[i]) continue;
-                boolean company = false;  // skip lone specks
+                boolean company = false;
                 for (int dy = -1; dy <= 1 && !company; dy++)
                     for (int dx = -1; dx <= 1 && !company; dx++) {
                         int yy = y + dy, xx = x + dx;
@@ -208,16 +213,6 @@ public final class Engine {
         int[][] o = Pil.resize(new int[][]{r, g, b}, im.width, im.height, w, h, Pil.BOX);
         int[] out = new int[w * h];
         for (int i = 0; i < out.length; i++) out[i] = 0xff000000 | (o[0][i] << 16) | (o[1][i] << 8) | o[2][i];
-        return new Image(w, h, out);
-    }
-
-    /** A box-sized piece of an image at real size, centred on (fx, fy) given as fractions. */
-    public static Image crop(Image im, int boxW, int boxH, double fx, double fy) {
-        int w = Math.min(boxW, im.width), h = Math.min(boxH, im.height);
-        int x0 = (int) Math.max(0, Math.min(im.width - w, fx * im.width - w / 2.0));
-        int y0 = (int) Math.max(0, Math.min(im.height - h, fy * im.height - h / 2.0));
-        int[] out = new int[w * h];
-        for (int y = 0; y < h; y++) System.arraycopy(im.argb, (y0 + y) * im.width + x0, out, y * w, w);
         return new Image(w, h, out);
     }
 
@@ -364,7 +359,7 @@ public final class Engine {
                 out[y * c + x] = d <= c * outer - 0.35 && d >= c * hole;
             }
         } else {   // cross stitch; thickness in twenty-fourths of a cell (default 4, the logo's)
-            int n = (int) s.value(Settings.Style.STITCH, 0);
+            double n = s.value(Settings.Style.STITCH, 0);
             int m = (int) Math.rint(c / 24.0), k = Math.max(0, (int) Math.rint(c * n / 24.0));
             for (int y = 0; y < c; y++) for (int x = 0; x < c; x++) {
                 boolean inside = x >= m && x < c - m && y >= m && y < c - m;

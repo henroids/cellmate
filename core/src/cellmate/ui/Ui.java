@@ -4,7 +4,6 @@ import cellmate.core.Engine;
 import cellmate.core.Grid;
 import cellmate.core.Picture;
 import cellmate.core.Settings;
-import cellmate.core.Settings.Kind;
 import cellmate.core.Settings.Knob;
 import cellmate.core.Settings.Style;
 import java.util.*;
@@ -38,7 +37,7 @@ public final class Ui {
     private final Host host;
     private final Settings s = new Settings();
     private final boolean[] styleOn = new boolean[Style.values().length];
-    private boolean replace, zoom;
+    private boolean replace;
 
     private Object input, output;
     private boolean inputFolder;
@@ -46,7 +45,11 @@ public final class Ui {
     private List<String> items;            // images in the input (null while scanning)
     private int previewIndex;
     private String message = "";
-    private String[] popup;                // small chooser (Android input: folder or image)
+    // a small window over the menu: a title, a few lines of information and the options to pick from
+    private String[] popup;                // the options (null = no window)
+    private String popupTitle;
+    private String[] popupInfo;
+    private Runnable[] popupActions;
     private int popupSel;
 
     // ---- preview: one style at a time, plus the original as a picture-in-picture
@@ -212,6 +215,10 @@ public final class Ui {
         List<Row> r = new ArrayList<>();
         r.add(new ValueRow("Input", "Input", () -> input != null ? inputName : "Choose", null, this::pickInput));
         r.add(new ValueRow("Output", "Output", () -> output != null ? outputName : "Choose", null, () -> host.pick(Pick.OUTPUT)));
+        r.add(new SliderRow("Detail", part("Detail", Settings.DETAIL.length, () -> Settings.nearest(Settings.DETAIL, s.cells),
+                v -> s.cells = Settings.DETAIL[v], v -> Settings.DETAIL[v] + " across"), () -> s.cells + " across", "160 across"));
+        r.add(new SliderRow("Pixel", part("Pixel size", Settings.PIXEL.length, () -> Settings.nearest(Settings.PIXEL, s.cellSize),
+                v -> s.cellSize = Settings.PIXEL[v], v -> Settings.PIXEL[v] + " px"), () -> s.cellSize + " px", "56 px"));
         for (Style st : Style.values()) r.add(new StyleRow(st));
         r.add(new Row("Greyscale", "Greyscale") {
             final List<Part> p = Collections.singletonList(part("Grey tones", 7, () -> s.greyTones - 2, v -> s.greyTones = v + 2, v -> (v + 2) + " tones"));
@@ -234,7 +241,7 @@ public final class Ui {
         r.add(new Row("Accent", "Accent") {
             // the bar is the amount; the colour is picked on the marks (or with L/R after switching section)
             final List<Part> p = Arrays.asList(
-                    part("Accent amount", Settings.RANGE_DEGREES.length, () -> s.accentRange, v -> s.accentRange = v, v -> fromDefault(v, Settings.ACCENT_DEFAULT)),
+                    part("Accent amount", Settings.ACCENT_SHARE.length, () -> s.accentRange, v -> s.accentRange = v, v -> fromDefault(v, Settings.ACCENT_DEFAULT)),
                     part("Accent color", Settings.SWATCHES.length, () -> s.swatch, v -> s.swatch = v, v -> Settings.SWATCH_NAMES[v]));
             boolean box() { return true; }
             boolean available() { return !s.color; }
@@ -247,15 +254,10 @@ public final class Ui {
             int[] marks() { return Settings.SWATCHES; }
             boolean picks() { return true; }
         });
-        r.add(new SliderRow("Detail", part("Detail", Settings.DETAIL.length, () -> Settings.nearest(Settings.DETAIL, s.cells),
-                v -> s.cells = Settings.DETAIL[v], v -> Settings.DETAIL[v] + " across"), () -> s.cells + " across", "256 across"));
-        r.add(new SliderRow("Pixel", part("Pixel size", Settings.PIXEL.length, () -> Settings.nearest(Settings.PIXEL, s.cellSize),
-                v -> s.cellSize = Settings.PIXEL[v], v -> Settings.PIXEL[v] + " px"), () -> s.cellSize + " px", "40 px"));
         if (items != null && items.size() > 1)
             r.add(new ValueRow("Preview image", "Preview image", () -> (previewIndex + 1) + " / " + items.size(), d -> {
                 previewIndex = Math.floorMod(previewIndex + d, items.size()); schedulePreview();
             }, null));
-        r.add(new ValueRow("Zoom", "Preview zoom", () -> zoom ? "1:1" : "Fit", d -> { zoom = !zoom; changed(); }, null));
         r.add(new ValueRow("Existing", "Existing files", () -> replace ? "Replace" : "Skip", d -> { replace = !replace; savePrefs(); }, null));
         r.add(new ValueRow("Start", "Start", this::startSummary, null, this::start));
         r.add(new ValueRow("Quit", "Quit", () -> "", null, host::quit));
@@ -285,8 +287,12 @@ public final class Ui {
 
     private void pickInput() {
         if (host.canPickEither()) { host.pick(Pick.INPUT); return; }
-        popup = new String[]{"A folder of images", "One image"};
-        popupSel = 0;
+        openPopup("Input", new String[0], new String[]{"A folder of images", "One image"},
+                () -> host.pick(Pick.INPUT_FOLDER), () -> host.pick(Pick.INPUT_IMAGE));
+    }
+
+    private void openPopup(String title, String[] info, String[] options, Runnable... actions) {
+        popupTitle = title; popupInfo = info; popup = options; popupActions = actions; popupSel = 0;
     }
 
     /** Chosen styles in menu order (what the preview pages through). */
@@ -368,7 +374,7 @@ public final class Ui {
         }
     }
 
-    private void popupChoose(int i) { popup = null; host.pick(i == 0 ? Pick.INPUT_FOLDER : Pick.INPUT_IMAGE); }
+    private void popupChoose(int i) { Runnable r = popupActions[i]; popup = null; r.run(); }
 
     // ================================================================== pointer (mouse and touch)
 
@@ -517,7 +523,7 @@ public final class Ui {
         final Style style = page;
         final String rel = items.get(Math.min(previewIndex, items.size() - 1));
         final Object in = input; final boolean folder = inputFolder;
-        final int bw = boxW, bh = boxH, pw = pipW, ph = pipH; final boolean z = zoom;
+        final int bw = boxW, bh = boxH, pw = pipW, ph = pipH;
         previewWorker.execute(() -> {
             if (seq != previewSeq.get()) return;
             try {
@@ -528,8 +534,8 @@ public final class Ui {
                 Engine.Image photo = Engine.fit(new Engine.Image(p.width, p.height, p.argb), pw, ph);
                 Object before = host.makeImage(photo.argb, photo.width, photo.height);
                 if (seq != previewSeq.get()) return;
-                Engine.Image full = Engine.draw(Engine.grid(p, set), style, set.cellSize, set);
-                Engine.Image shown = z ? Engine.crop(full, bw, bh, 0.5, 0.5) : Engine.fit(full, bw, bh);
+                Grid grid = Engine.grid(p, set);
+                Engine.Image shown = Engine.fit(Engine.draw(grid, style, set.cellSizeFor(grid.cols, grid.rows), set), bw, bh);
                 Object img = host.makeImage(shown.argb, shown.width, shown.height);
                 host.runOnUi(() -> {
                     if (seq != previewSeq.get()) return;
@@ -553,6 +559,20 @@ public final class Ui {
         if (items == null) { message = "Still looking for images..."; return; }
         if (items.isEmpty()) { message = "No images to convert."; return; }
         if (inputFolder && host.isInside(output, input)) { message = "Pick an output folder outside the input folder."; return; }
+        List<String> names = new ArrayList<>();
+        for (Style st : chosen) names.add(st.label);
+        String look = s.color ? s.colors + " colors" : s.greyTones + " grey tones" + (s.accent ? ", " + Settings.SWATCH_NAMES[s.swatch] + " accent" : "");
+        openPopup("Start?", new String[]{
+                startSummary(),
+                String.join(", ", names),
+                look + ",  " + s.cells + " across,  " + s.cellSize + " px",
+                "Into " + outputName + (replace ? ",  replacing existing files" : ",  skipping existing files")},
+                new String[]{"Start", "Go back"}, this::begin, () -> { });
+    }
+
+    /** Converts everything, once the start window is confirmed. */
+    private void begin() {
+        List<Style> chosen = chosenStyles();
         final List<String> list = new ArrayList<>(items);
         final List<String> outs = Plan.outputs(list);
         final Settings set = s.copy();
@@ -578,7 +598,7 @@ public final class Ui {
                         Grid g = Engine.grid(p, set);
                         for (Style st : todo) {
                             if (cancel.get()) break;
-                            host.writePng(out, Plan.styleFolder(name, folder, st) + "/" + outs.get(i), Engine.draw(g, st, set.cellSize, set));
+                            host.writePng(out, Plan.styleFolder(name, folder, st) + "/" + outs.get(i), Engine.draw(g, st, set.cellSizeFor(g.cols, g.rows), set));
                             written++; done++;
                             host.repaint();
                         }
@@ -716,7 +736,7 @@ public final class Ui {
             // Accent: the bar is the amount, filled in the picked colour; the least reaches just past the name
             int fillColor = Settings.SWATCHES[s.swatch];
             g.fill(menuX, y, menuW, rowH, CHOSEN);   // the empty part: the chosen grey, like the other sliders
-            int x1 = px, start = labelX + g.textWidth(row.label, t) + 14 * k, steps = Settings.RANGE_DEGREES.length;
+            int x1 = px, start = labelX + g.textWidth(row.label, t) + 14 * k, steps = Settings.ACCENT_SHARE.length;
             int end = start + s.accentRange * (x1 - start) / (steps - 1);
             List<int[]> fills = new ArrayList<>();
             magma(g, menuX, y, x1 - menuX, rowH, end - menuX, fillColor, null, s.swatch * 7 + s.accentRange * 13 + 3, fills);
@@ -915,7 +935,7 @@ public final class Ui {
 
     /** A sample of a style at the real pixel size (smaller only if two pixels wouldn't fit), in the current tones. */
     private Object stylePatch(Style st, int pw, int ph) {
-        int cell = Math.max(2, Math.min(s.cellSize, ph / 2));
+        int cell = Math.max(2, ph / 4);   // a fixed close-up, whatever the pixel size
         // always the same white and dark grey: the patch shows what the settings do, never the mode's colours
         int[] values = {WHITE, CHOSEN};   // the app's one light grey and one dark grey
         String key = "style|" + st + "|" + pw + "x" + ph + "|" + cell + "|" + Arrays.toString(values) + "|" + Arrays.toString(s.knob[st.ordinal()]);
@@ -1004,9 +1024,9 @@ public final class Ui {
         return spots;
     }
 
-    /** CELLMATE, each letter in the next colour of the accent palette. */
+    /** cellmate, each letter in the next colour of the accent palette. */
     private void title(Surface g, int x, int y) {
-        String name = "CELLMATE";
+        String name = "cellmate";
         for (int i = 0; i < name.length(); i++) {
             String ch = name.substring(i, i + 1);
             g.text(ch, x, y, t, Settings.SWATCHES[i % Settings.SWATCHES.length]);
@@ -1086,14 +1106,19 @@ public final class Ui {
 
     private void drawPopup(Surface g, int w, int h) {
         popupRowH = rowH;
-        popupW = Math.min(w - 40 * k, 24 * t);
-        int ph = popup.length * rowH + t + 20 * k;
+        int lineH = t + 8 * k, pad = 14 * k;
+        popupW = 24 * t;
+        for (String line : popupInfo) popupW = Math.max(popupW, g.textWidth(line, t) + 2 * pad);
+        popupW = Math.min(w - 40 * k, popupW);
+        int ph = pad + lineH + popupInfo.length * lineH + pad + popup.length * rowH;
         popupX = (w - popupW) / 2;
         int top = (h - ph) / 2;
-        g.fill(popupX - 2 * k, top - 2 * k, popupW + 4 * k, ph + 4 * k, WHITE);
-        g.fill(popupX, top, popupW, ph, BLACK);
-        g.text("Input", popupX + 10 * k, top + 8 * k, t, GREY);
-        popupY = top + t + 16 * k;
+        g.fill(0, 0, w, h, 0xc0000000);   // dim the menu behind
+        g.fill(popupX, top, popupW, ph, CHOSEN);
+        g.text(popupTitle, popupX + pad, top + pad, t, WHITE);
+        for (int i = 0; i < popupInfo.length; i++)
+            g.text(fitText(g, popupInfo[i], popupW - 2 * pad, t), popupX + pad, top + pad + (i + 1) * lineH, t, GREY);
+        popupY = top + pad + lineH + popupInfo.length * lineH + pad;
         for (int i = 0; i < popup.length; i++) {
             int ry = popupY + i * rowH;
             boolean on = i == popupSel;
@@ -1237,11 +1262,11 @@ public final class Ui {
          .append("swatch8=").append(s.swatch).append('\n')
          .append("accentAmount=").append(s.accentRange).append('\n')
          .append("cells=").append(s.cells).append('\n').append("cell=").append(s.cellSize).append('\n')
-         .append("replace=").append(replace).append('\n').append("zoom=").append(zoom).append('\n');
+         .append("replace=").append(replace).append('\n');
         StringBuilder st = new StringBuilder();
         for (Style x : Style.values()) if (styleOn[x.ordinal()]) st.append(x.name()).append(',');
         b.append("styles=").append(st).append('\n');
-        for (Map.Entry<String, String> e : savedKnobs.entrySet()) b.append("knobs3.").append(e.getKey()).append('=').append(e.getValue()).append('\n');
+        for (Map.Entry<String, String> e : savedKnobs.entrySet()) b.append("knobs4.").append(e.getKey()).append('=').append(e.getValue()).append('\n');
         if (input != null) b.append("input=").append(inputFolder ? "d" : "f").append(host.savePlace(input)).append('\n').append("inputName=").append(inputName).append('\n');
         if (output != null) b.append("output=").append(host.savePlace(output)).append('\n').append("outputName=").append(outputName).append('\n');
         try { host.savePrefs(b.toString()); } catch (Exception ignored) { }
@@ -1259,18 +1284,17 @@ public final class Ui {
             s.colors = clamp(Integer.parseInt(m.getOrDefault("colors", "12")) / 4 * 4, 4, 32);
             s.accent = Boolean.parseBoolean(m.getOrDefault("accentOn", "false"));
             s.swatch = clamp(Integer.parseInt(m.getOrDefault("swatch8", "0")), 0, Settings.SWATCHES.length - 1);
-            s.accentRange = clamp(Integer.parseInt(m.getOrDefault("accentAmount", "" + Settings.ACCENT_DEFAULT)), 0, Settings.RANGE_DEGREES.length - 1);
-            s.cells = Settings.DETAIL[Settings.nearest(Settings.DETAIL, Integer.parseInt(m.getOrDefault("cells", "96")))];
-            s.cellSize = Settings.PIXEL[Settings.nearest(Settings.PIXEL, Integer.parseInt(m.getOrDefault("cell", "15")))];
+            s.accentRange = clamp(Integer.parseInt(m.getOrDefault("accentAmount", "" + Settings.ACCENT_DEFAULT)), 0, Settings.ACCENT_SHARE.length - 1);
+            s.cells = Settings.DETAIL[Settings.nearest(Settings.DETAIL, Integer.parseInt(m.getOrDefault("cells", "64")))];
+            s.cellSize = Settings.PIXEL[Settings.nearest(Settings.PIXEL, Integer.parseInt(m.getOrDefault("cell", "30")))];
             replace = Boolean.parseBoolean(m.getOrDefault("replace", "false"));
-            zoom = Boolean.parseBoolean(m.getOrDefault("zoom", "false"));
             String st = m.get("styles");
             if (st != null) {
                 Arrays.fill(styleOn, false);
                 for (String n : st.split(",")) if (!n.isEmpty()) try { styleOn[Style.valueOf(n).ordinal()] = true; } catch (IllegalArgumentException ignored) { }
             }
             for (Style x : Style.values()) {
-                String v = m.get("knobs3." + x.name());
+                String v = m.get("knobs4." + x.name());
                 if (v == null) continue;
                 savedKnobs.put(x.name(), v);
                 String[] parts = v.split(",");

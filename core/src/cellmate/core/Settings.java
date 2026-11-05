@@ -27,36 +27,42 @@ public final class Settings {
         public int steps() { return values.length; }
     }
 
-    // Every setting's default is the middle step, so each can go either way. The defaults are
-    // the looks the styles have always had.
-    private static final double[] RING_OUTER = {0.42, 0.46, 0.50, 0.54, 0.58};   // past 0.5 beads start to fuse
-    private static final double[] RING_HOLE = {0.11, 0.14, 0.17, 0.20, 0.23};
-    private static final double[] SOLID_SIZE = {0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4};   // past 1.0 squares overlap
+    // Every setting's default is the middle step, with a wide range either side of it. The
+    // defaults are the looks the styles have always had.
+    private static final double[] RING_OUTER = {0.30, 0.34, 0.38, 0.42, 0.46, 0.50, 0.54, 0.58, 0.62, 0.66, 0.70};   // past 0.5 beads fuse
+    private static final double[] RING_HOLE = {0.02, 0.05, 0.08, 0.11, 0.14, 0.17, 0.20, 0.23, 0.26, 0.29, 0.32};   // kept smaller than the bead
+    private static final double[] SOLID_SIZE = {0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7};   // past 1.0 squares overlap
+    private static final double[] ROTATION = {-180, -150, -120, -90, -60, -30, 0, 30, 60, 90, 120, 150, 180};   // all the way round
 
     public static final Knob[][] KNOBS = {
-        /* BORDER  */ {new Knob("Border size", Kind.SLIDER, 2, 0.015, 0.03, 0.045, 0.065, 0.09)},
-        /* ROUNDED */ {new Knob("Roundness", Kind.SLIDER, 2, 0.08, 0.14, 0.2, 0.28, 0.36)},
-        /* JITTER  */ {new Knob("Jitter", Kind.SLIDER, 2, 0.02, 0.035, 0.05, 0.07, 0.09)},
-        /* SOLID   */ {new Knob("Light squares", Kind.SLIDER, 4, SOLID_SIZE), new Knob("Dark squares", Kind.SLIDER, 4, SOLID_SIZE)},
-        /* STITCH  */ {new Knob("Thickness", Kind.SLIDER, 2, 2, 3, 4, 5, 6)},   // twenty-fourths of a cell
-        /* BEADS   */ {new Knob("Outer circle", Kind.SLIDER, 2, RING_OUTER), new Knob("Inner circle", Kind.SLIDER, 2, RING_HOLE)},
-        /* MELTED  */ {new Knob("Outer circle", Kind.SLIDER, 2, RING_OUTER), new Knob("Inner circle", Kind.SLIDER, 2, RING_HOLE),
-                       new Knob("Rotation", Kind.SLIDER, 3, -90, -60, -30, 0, 30, 60, 90),
-                       new Knob("Meltiness", Kind.SLIDER, 2, 0.4, 0.7, 1.0, 1.3, 1.6)},
+        /* BORDER  */ {new Knob("Border size", Kind.SLIDER, 5, 0.004, 0.008, 0.015, 0.022, 0.03, 0.045, 0.06, 0.08, 0.1, 0.125, 0.15)},
+        /* ROUNDED */ {new Knob("Roundness", Kind.SLIDER, 5, 0.02, 0.05, 0.08, 0.11, 0.14, 0.2, 0.26, 0.32, 0.38, 0.44, 0.5)},
+        /* JITTER  */ {new Knob("Jitter", Kind.SLIDER, 5, 0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.065, 0.08, 0.1, 0.12, 0.15)},
+        /* SOLID   */ {new Knob("Light squares", Kind.SLIDER, 7, SOLID_SIZE), new Knob("Dark squares", Kind.SLIDER, 7, SOLID_SIZE)},
+        /* STITCH  */ {new Knob("Thickness", Kind.SLIDER, 5, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 7, 8, 10)},   // twenty-fourths of a cell
+        /* BEADS   */ {new Knob("Outer circle", Kind.SLIDER, 5, RING_OUTER), new Knob("Inner circle", Kind.SLIDER, 5, RING_HOLE)},
+        /* MELTED  */ {new Knob("Outer circle", Kind.SLIDER, 5, RING_OUTER), new Knob("Inner circle", Kind.SLIDER, 5, RING_HOLE),
+                       new Knob("Rotation", Kind.SLIDER, 6, ROTATION),
+                       new Knob("Meltiness", Kind.SLIDER, 5, 0.25, 0.4, 0.55, 0.7, 0.85, 1.0, 1.3, 1.6, 1.9, 2.2, 2.5)},
     };
 
     /** The 8 accent colours: the same bright family as the colour patch. */
     public static final int[] SWATCHES = {0xffe93e8f, 0xffff6a1c, 0xfff6d55c, 0xff44d468, 0xff3caea3, 0xff2278ff, 0xff773ca6, 0xffa77d50};
     public static final String[] SWATCH_NAMES = {"Pink", "Orange", "Yellow", "Green", "Teal", "Blue", "Purple", "Brown"};
-    /** Accent amount, 5 steps: how wide a hue band, and how dull and dark a colour may be, and still take the accent. */
-    public static final float[] RANGE_DEGREES = {10, 18, 26, 36, 50};
-    public static final float[] ACCENT_MIN_SAT = {0.40f, 0.34f, 0.28f, 0.22f, 0.16f};
-    public static final float[] ACCENT_MIN_VAL = {0.26f, 0.22f, 0.18f, 0.15f, 0.12f};
+    /**
+     * Accent amount: the share of the picture, its lightest parts, that takes the accent colour.
+     * The same parts for every colour, whatever colour they were in the photo.
+     */
+    public static final double[] ACCENT_SHARE = {0.03, 0.06, 0.10, 0.15, 0.22};
     public static final int ACCENT_DEFAULT = 2;
 
     /** Detail (pixels across the short side) and Pixel size (output pixels per cell); the defaults are in the middle. */
-    public static final int[] DETAIL = {32, 48, 64, 80, 96, 128, 160, 192, 256};
-    public static final int[] PIXEL = {4, 6, 8, 11, 15, 20, 25, 32, 40};
+    // Built around the defaults (64 across, 30 px = 1920 px on the short side): coarse enough to
+    // still read as a picture at the low end, and no bigger than a phone can draw at the high end.
+    public static final int[] DETAIL = {24, 28, 32, 36, 40, 48, 56, 64, 72, 80, 96, 112, 128, 144, 160};
+    public static final int[] PIXEL = {12, 14, 16, 18, 21, 24, 27, 30, 33, 36, 40, 44, 48, 52, 56};
+    /** The longest side an output image may have (bigger runs phones and PCs out of memory). */
+    public static final int MAX_SIDE = 12000;
 
     /** Index of the closest value (for values saved before the sliders had fixed steps). */
     public static int nearest(int[] values, int v) {
@@ -71,8 +77,8 @@ public final class Settings {
     public boolean accent = false;  // greyscale only
     public int swatch = 0;          // 0..7
     public int accentRange = ACCENT_DEFAULT;   // accent amount, 0..4
-    public int cells = 96;          // pixels across the short side
-    public int cellSize = 15;       // output pixels per cell
+    public int cells = 64;          // pixels across the short side
+    public int cellSize = 30;       // output pixels per cell
     public final int[][] knob = defaults();
 
     public static int[][] defaults() {
@@ -99,6 +105,6 @@ public final class Settings {
         for (int i = 0; i < knob.length; i++) knob[i] = o.knob[i].clone();
     }
 
-    int accentColor() { return SWATCHES[swatch]; }
-    float accentHue() { return Engine.hsv(SWATCHES[swatch])[0]; }
+    /** Pixel size, made smaller if needed so an image of cols x rows cells stays within MAX_SIDE. */
+    public int cellSizeFor(int cols, int rows) { return Math.max(1, Math.min(cellSize, MAX_SIDE / Math.max(1, Math.max(cols, rows)))); }
 }
