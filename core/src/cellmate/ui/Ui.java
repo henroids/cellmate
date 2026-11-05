@@ -14,14 +14,15 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Cellmate's whole interface, drawn by hand in the Black Mesa Tennis start-screen style: black,
- * pixel font, an inverted white bar for the highlighted row, left/right to change values, A to
- * select, B to go back. The desktop and Android apps only forward drawing and input.
+ * pixel font, one light grey and one dark grey. The desktop and Android apps only forward drawing
+ * and input.
  *
- * A chosen style shows a white-bordered box on the right of its row. The box is its slider: it
- * fills like a pixelated progress bar, split into one section per setting (Melted adds two small
- * dials, rotation and meltiness). L/R moves between sections. One preview shows a style at a
- * time, with arrows at the bottom to page through the chosen styles and the original photo as a
- * small picture in the top-right corner.
+ * Settings rows are sliders. A chosen row is a dark grey bar that fills like a ragged, molten
+ * progress bar, split into one section per setting (L/R moves between sections, left/right or a
+ * drag changes the value). A tap chooses or un-chooses a style. Greyscale, Color and Accent show
+ * XOXO marks on the right; Accent's marks are tapped to pick its colour. One preview shows a style
+ * at a time, with arrows at the bottom to page through the chosen styles and the original photo
+ * as a small picture in the top-left corner.
  */
 public final class Ui {
     public enum Pick { INPUT, INPUT_FOLDER, INPUT_IMAGE, OUTPUT }
@@ -88,12 +89,11 @@ public final class Ui {
 
     // ================================================================== rows
 
-    /** One section of a slider box (or a dial next to it). */
+    /** One section of a slider bar. */
     private interface Part {
         int steps();
         int get();
         void set(int v);
-        boolean dial();
         String name();
         default String full() { return name(); }
     }
@@ -107,11 +107,9 @@ public final class Ui {
                 s.knob[st.ordinal()][i] = clamp(v, 0, kn.steps() - 1);
                 int now = s.knob[st.ordinal()][i];
                 int mid = kn.def;
-                String where = now == mid ? "default" : now < mid ? (mid - now) + " below default" : (now - mid) + " above default";
-                message = st.label + "  " + kn.name + "  " + (kn.name.equals("Rotation") ? (int) kn.values[now] + " deg" : where);
+                message = st.label + "  " + kn.name + "  " + (kn.name.equals("Rotation") ? (int) kn.values[now] + " deg" : fromDefault(now, mid));
                 changed();
             }
-            public boolean dial() { return false; }   // every setting is a bar segment now
             public String name() { return SHORT.getOrDefault(kn.name, kn.name); }
             public String full() { return kn.name; }
         };
@@ -122,25 +120,23 @@ public final class Ui {
     static {
         String[] pairs = {"Border size", "Border", "Roundness", "Round", "Jitter", "Jitter", "Light squares", "Light",
                 "Dark squares", "Dark", "Thickness", "Thick", "Outer circle", "Outer", "Inner circle", "Inner",
-                "Rotation", "Turn", "Meltiness", "Melt", "Accent color", "Accent"};
+                "Rotation", "Turn", "Meltiness", "Melt"};
         for (int i = 0; i < pairs.length; i += 2) SHORT.put(pairs[i], pairs[i + 1]);
     }
 
-    private Part part(String name, int steps, java.util.function.IntSupplier get, java.util.function.IntConsumer set) {
+    /** A slider section over 0..steps-1; describe says what the new value is, for the status line. */
+    private Part part(String name, int steps, java.util.function.IntSupplier get, java.util.function.IntConsumer set,
+                      java.util.function.IntFunction<String> describe) {
         return new Part() {
             public int steps() { return steps; }
             public int get() { return get.getAsInt(); }
-            public void set(int v) {
-                int now = clamp(v, 0, steps - 1), mid = Settings.ACCENT_DEFAULT;
-                set.accept(now);
-                message = name.equals("Accent amount") ? "Accent amount  " + (now == mid ? "default" : now < mid ? (mid - now) + " below default" : (now - mid) + " above default")
-                        : name.equals("Accent color") ? "Accent  " + Settings.SWATCH_NAMES[now]
-                        : name + "  " + (now + 1) + " / " + steps;
-                changed();
-            }
-            public boolean dial() { return false; }
+            public void set(int v) { int now = clamp(v, 0, steps - 1); set.accept(now); message = name + "  " + describe.apply(now); changed(); }
             public String name() { return name; }
         };
+    }
+
+    private static String fromDefault(int now, int def) {
+        return now == def ? "default" : now < def ? (def - now) + " below default" : (now - def) + " above default";
     }
 
     /** A menu line: a plain row with a value, or a "box" row (styles, Greyscale, Color, Accent). */
@@ -159,12 +155,12 @@ public final class Ui {
         List<Part> parts() { return Collections.emptyList(); }
         Object patch(int w, int h) { return null; }
         Style style() { return null; }
-        /** Box rows whose sections are colour cells (Accent). */
-        int[] cellColors() { return null; }
         /** Colours laid along the bar's fill instead of white (Greyscale tones, Color palette). */
         int[] bands() { return null; }
         /** The 8 XOXO marks' colours, for rows that show marks instead of a patch. */
         int[] marks() { return null; }
+        /** Always chosen (Detail, Pixel size): a tap on the bar sets the value instead of toggling. */
+        boolean fixed() { return false; }
         /** Accent: the marks themselves are tapped to pick, and the bar fills just past the label. */
         boolean picks() { return false; }
     }
@@ -195,36 +191,47 @@ public final class Ui {
         Style style() { return st; }
     }
 
+    /** A setting that's always on: a dark grey bar that's only ever slid, with its value on the right. */
+    private final class SliderRow extends Row {
+        final List<Part> parts; final java.util.function.Supplier<String> value;
+        SliderRow(String key, Part part, java.util.function.Supplier<String> value) {
+            super(key, part.name()); this.parts = Collections.singletonList(part); this.value = value;
+        }
+        boolean box() { return true; }
+        boolean chosen() { return true; }
+        boolean fixed() { return true; }
+        List<Part> parts() { return parts; }
+        String value() { return value.get(); }
+    }
+
     private List<Row> rows() {
         List<Row> r = new ArrayList<>();
         r.add(new ValueRow("Input", "Input", () -> input != null ? inputName : "Choose", null, this::pickInput));
         r.add(new ValueRow("Output", "Output", () -> output != null ? outputName : "Choose", null, () -> host.pick(Pick.OUTPUT)));
         for (Style st : Style.values()) r.add(new StyleRow(st));
         r.add(new Row("Greyscale", "Greyscale") {
-            final List<Part> p = Collections.singletonList(part("Grey tones", 7, () -> s.greyTones - 2, v -> s.greyTones = v + 2));
+            final List<Part> p = Collections.singletonList(part("Grey tones", 7, () -> s.greyTones - 2, v -> s.greyTones = v + 2, v -> (v + 2) + " tones"));
             boolean box() { return true; }
             boolean chosen() { return !s.color; }
             void choose() { if (s.color) { s.color = false; changed(); } }
             List<Part> parts() { return p; }
-            Object patch(int w, int h) { return tonesPatch(w, h); }
             int[] bands() { return greyColors(); }
             int[] marks() { return pad8(greyColors()); }
         });
         r.add(new Row("Color", "Color") {
-            final List<Part> p = Collections.singletonList(part("Colors", 8, () -> (s.colors - 4) / 4, v -> s.colors = 4 + 4 * v));
+            final List<Part> p = Collections.singletonList(part("Colors", 8, () -> (s.colors - 4) / 4, v -> s.colors = 4 + 4 * v, v -> (4 + 4 * v) + " colors"));
             boolean box() { return true; }
             boolean chosen() { return s.color; }
             void choose() { if (!s.color) { s.color = true; changed(); } }
             List<Part> parts() { return p; }
-            Object patch(int w, int h) { return colorPatch(w, h); }
             int[] bands() { return paletteByLight(); }
             int[] marks() { return colorMarks(); }
         });
         r.add(new Row("Accent", "Accent") {
             // the bar is the amount; the colour is picked on the marks (or with L/R after switching section)
             final List<Part> p = Arrays.asList(
-                    part("Accent amount", Settings.RANGE_DEGREES.length, () -> s.accentRange, v -> s.accentRange = v),
-                    part("Accent color", Settings.SWATCHES.length, () -> s.swatch, v -> s.swatch = v));
+                    part("Accent amount", Settings.RANGE_DEGREES.length, () -> s.accentRange, v -> s.accentRange = v, v -> fromDefault(v, Settings.ACCENT_DEFAULT)),
+                    part("Accent color", Settings.SWATCHES.length, () -> s.swatch, v -> s.swatch = v, v -> Settings.SWATCH_NAMES[v]));
             boolean box() { return true; }
             boolean available() { return !s.color; }
             boolean chosen() { return s.accent && !s.color; }
@@ -233,18 +240,18 @@ public final class Ui {
                 s.accent = !s.accent; changed();
             }
             List<Part> parts() { return p; }
-            Object patch(int w, int h) { return accentPatch(w, h); }
             int[] marks() { return Settings.SWATCHES; }
             boolean picks() { return true; }
-            int[] cellColors() { return Settings.SWATCHES; }
         });
+        r.add(new SliderRow("Detail", part("Detail", Settings.DETAIL.length, () -> Settings.nearest(Settings.DETAIL, s.cells),
+                v -> s.cells = Settings.DETAIL[v], v -> Settings.DETAIL[v] + " across"), () -> s.cells + " across"));
+        r.add(new SliderRow("Pixel", part("Pixel size", Settings.PIXEL.length, () -> Settings.nearest(Settings.PIXEL, s.cellSize),
+                v -> s.cellSize = Settings.PIXEL[v], v -> Settings.PIXEL[v] + " px"), () -> s.cellSize + " px"));
         if (items != null && items.size() > 1)
             r.add(new ValueRow("Preview image", "Preview image", () -> (previewIndex + 1) + " / " + items.size(), d -> {
                 previewIndex = Math.floorMod(previewIndex + d, items.size()); schedulePreview();
             }, null));
         r.add(new ValueRow("Zoom", "Preview zoom", () -> zoom ? "1:1" : "Fit", d -> { zoom = !zoom; changed(); }, null));
-        r.add(new ValueRow("Detail", "Detail", () -> s.cells + " across", d -> { s.cells = clamp(s.cells + 8 * d, 16, 256); changed(); }, null));
-        r.add(new ValueRow("Pixel", "Pixel size", () -> s.cellSize + " px", d -> { s.cellSize = clamp(s.cellSize + d, 2, 40); changed(); }, null));
         r.add(new ValueRow("Existing", "Existing files", () -> replace ? "Replace" : "Skip", d -> { replace = !replace; savePrefs(); }, null));
         r.add(new ValueRow("Start", "Start", this::startSummary, null, this::start));
         r.add(new ValueRow("Quit", "Quit", () -> "", null, host::quit));
@@ -319,13 +326,13 @@ public final class Ui {
                 if (!row.available()) { message = "Accent works with Greyscale."; break; }
                 if (!row.chosen()) { message = "Press A to choose " + row.label + " first."; break; }
                 Part p = row.parts().get(Math.min(sec, row.parts().size() - 1));
-                p.set(p.dial() && p.steps() > 6 ? Math.floorMod(p.get() + d, p.steps()) : p.get() + d);
+                p.set(p.get() + d);
                 break;
             }
             case A: if (row.box()) row.choose(); else row.activate(); break;
             case B: if (i != 0) select(r, 0); break;
             case SAVE: if (row.style() != null) save(row.style()); break;
-            case RESET: if (row.style() != null) reset(row.style()); break;
+            case RESET: resetAll(); break;
         }
         host.repaint();
     }
@@ -338,9 +345,12 @@ public final class Ui {
         message = st.label + " saved for next time.";
     }
 
-    private void reset(Style st) {
-        s.knob[st.ordinal()] = Settings.defaults()[st.ordinal()];
-        message = st.label + " is back to its defaults.";
+    /** Y: every setting back to its default (the chosen styles, folders and preview stay as they are). */
+    private void resetAll() {
+        s.set(new Settings());
+        savedKnobs.clear();
+        savePrefs();
+        message = "Everything is back to its defaults.";
         changed();
     }
 
@@ -400,6 +410,7 @@ public final class Ui {
         if (down.what == PAGE_RIGHT) { turnPage(1); return; }
         if (down.what == HELP) { key((Key) helpKeys.get(down.index)); return; }
         if (down.what == SWATCH) { pickSwatch(down.index); return; }
+        if (down.what instanceof Part && rowFor(down.row) instanceof SliderRow) { slide(down, x, y); return; }
         List<Row> r = rows();
         int idx = -1;
         for (int i = 0; i < r.size(); i++) if (r.get(i).key.equals(down.row)) idx = i;
@@ -425,6 +436,8 @@ public final class Ui {
         host.repaint();
     }
 
+    private Row rowFor(String key) { for (Row row : rows()) if (row.key.equals(key)) return row; return null; }
+
     /** Old single-tap entry point (tests). */
     public void tap(int x, int y) { pointerDown(x, y); pointerUp(x, y); }
 
@@ -433,16 +446,8 @@ public final class Ui {
         List<Row> r = rows();
         for (int i = 0; i < r.size(); i++) if (r.get(i).key.equals(h.row)) select(r, i);
         section.put(h.row, h.index);
-        if (p.dial()) {
-            double a = Math.toDegrees(Math.atan2(y - (h.y + h.h / 2.0), x - (h.x + h.w / 2.0))) + 90;   // 0 = up
-            a = Math.floorMod((int) Math.round(a), 360);
-            int v = p.steps() > 6 ? (int) Math.round(a / (360.0 / p.steps())) % p.steps()
-                    : clamp((int) Math.round(Math.min(a, 270) / 270.0 * (p.steps() - 1)), 0, p.steps() - 1);
-            if (v != p.get()) p.set(v);
-        } else {
-            int v = clamp((x - h.x) * p.steps() / Math.max(1, h.w), 0, p.steps() - 1);
-            if (v != p.get()) p.set(v);
-        }
+        int v = clamp((x - h.x) * p.steps() / Math.max(1, h.w), 0, p.steps() - 1);
+        if (v != p.get()) p.set(v);
         host.repaint();
     }
 
@@ -628,10 +633,13 @@ public final class Ui {
         g.text(fitText(g, message, w / 2, t), 14 * k, h - bottomH + 6 * k, t, GREY);
         List<Row> r = rows();
         Row row = r.get(selectedIndex(r));
-        List<Object> help = new ArrayList<>(Arrays.asList("A", row.box() ? (row.chosen() && row.style() != null ? "Remove" : "Choose") : "Select", Key.A));
+        List<Object> help = new ArrayList<>();
+        if (!row.fixed()) help.addAll(Arrays.asList("A", row.box() ? (row.chosen() && row.style() != null ? "Remove" : "Choose") : "Select", Key.A));
         if (row.box() && row.parts().size() > 1 && row.chosen()) help.addAll(Arrays.asList("LR", "Section", Key.NEXT));
-        if (row.style() != null && row.chosen()) help.addAll(Arrays.asList("X", "Save", Key.SAVE, "Y", "Reset", Key.RESET));
-        else help.addAll(Arrays.asList("B", "Back", Key.B));
+        boolean saves = row.style() != null && row.chosen();
+        if (saves) help.addAll(Arrays.asList("X", "Save", Key.SAVE));
+        help.addAll(Arrays.asList("Y", "Reset", Key.RESET));
+        if (!saves) help.addAll(Arrays.asList("B", "Back", Key.B));
         drawHelp(g, w, h, help.toArray());
         if (popup != null) drawPopup(g, w, h);
     }
@@ -653,9 +661,6 @@ public final class Ui {
         if (sel < scroll) scroll = sel;
         if (sel >= scroll + visible) scroll = sel - visible + 1;
         scroll = clamp(scroll, 0, Math.max(0, r.size() - visible));
-        int labelW = 0;
-        for (Row row : r) if (row.box()) labelW = Math.max(labelW, g.textWidth(row.label, t));
-        barWidth = Math.max(4 * t, Math.min(6 * t, menuW / 4));
         g.clip(menuX, menuY, menuW, menuH);
         for (int i = scroll; i < r.size() && i < scroll + visible; i++) {
             Row row = r.get(i);
@@ -663,7 +668,7 @@ public final class Ui {
             boolean on = i == sel;
             if (on && !row.box()) g.fill(menuX, y, menuW, rowH, HILITE);   // slider rows are never light grey: see drawBoxRow
             hits.add(new Hit(menuX, y, menuW, rowH, row.key, ROW, 0));
-            if (row.box()) drawBoxRow(g, row, y, on, labelW); else drawValueRow(g, row, y, on);
+            if (row.box()) drawBoxRow(g, row, y, on); else drawValueRow(g, row, y, on);
         }
         g.unclip();
         if (scroll > 0) triangleUp(g, menuX + menuW - 10 * k, menuY - 6 * k, 4 * k, true, DIM);
@@ -688,21 +693,16 @@ public final class Ui {
     }
 
     /**
-     * Label on the left, sample patch on the right. A chosen row gets a thin white outline. When a
-     * chosen row is highlighted, the highlight bar itself is the slider: it fills from the left in
-     * steps, one section per setting, and the name flips colour where the fill passes under it.
-     * Melted's two dials sit just left of the patch.
+     * Label on the left, patch (or XOXO marks, or a value) on the right. Selected or chosen, the row
+     * is the dark grey bar; a chosen row's bar is its slider, one section per setting, filling with
+     * molten pixels, and the words inside flip to black where the fill passes under them.
      */
-    private void drawBoxRow(Surface g, Row row, int y, boolean on, int labelW) {
-        int cy = y + rowH / 2, right = menuX + menuW - 14 * k;
+    private void drawBoxRow(Surface g, Row row, int y, boolean on) {
         boolean avail = row.available(), chosen = row.chosen();
         List<Part> parts = row.parts();
         int focusSec = clamp(section.getOrDefault(row.key, 0), 0, Math.max(0, parts.size() - 1));
-        int dials = 0;
-        for (Part p : parts) if (p.dial()) dials++;
         // the patch fills the bar's height and ends where the bar ends
         int ph = rowH, pw = ph * 5 / 2, px = menuX + menuW - pw;
-        int dialD = t | 1, dialsW = dials * (dialD + 12 * k);
         int labelX = menuX + 10 * k, ty = y + (rowH - t) / 2;
         boolean slider = chosen && avail && !parts.isEmpty() && !row.picks();   // a chosen row always shows its setting
 
@@ -721,9 +721,9 @@ public final class Ui {
             for (int[] f : fills) { g.clip(f[0], f[1], f[2], f[3]); g.text(row.label, labelX, ty, t, light(f[4]) ? BLACK : WHITE); g.unclip(); }
         } else if (slider) {
             g.fill(menuX, y, menuW, rowH, CHOSEN);                        // the empty part: the chosen grey
-            int x0 = menuX, x1 = px - 12 * k - dialsW;
+            int x0 = menuX, x1 = px - 12 * k;
             List<Integer> idx = new ArrayList<>();
-            for (int i = 0; i < parts.size(); i++) if (!parts.get(i).dial()) idx.add(i);
+            for (int i = 0; i < parts.size(); i++) idx.add(i);
             int n = idx.size(), gap = n > 1 ? 3 * k : 0, secW = n == 0 ? 0 : (x1 - x0 - gap * (n - 1)) / n;
             List<int[]> fills = new ArrayList<>();   // {x, y, w, h} pieces of fill, for the text flip
             for (int j = 0; j < n; j++) {
@@ -733,7 +733,7 @@ public final class Ui {
                 int fw = row.bands() != null
                         ? (int) Math.round((p.get() + 1) * secW / (double) p.steps())   // a count: even the lowest shows its colours
                         : (int) Math.round(p.get() * secW / (double) Math.max(1, p.steps() - 1));
-                int fillColor = row.cellColors() != null ? row.cellColors()[p.get()] : (n == 1 || !on || idx.get(j) == focusSec) ? WHITE : ICON;
+                int fillColor = n == 1 || !on || idx.get(j) == focusSec ? WHITE : ICON;
                 magma(g, sx, y, secW, rowH, fw, fillColor, row.bands(), p.get() * 7 + j * 31 + row.key.length(), fills);
                 if (j > 0) g.fill(sx - gap, y, gap, rowH, BLACK);   // a thin black cut between sections
                 hits.add(new Hit(sx, y, secW, rowH, row.key, p, idx.get(j)));
@@ -757,7 +757,7 @@ public final class Ui {
             g.text(row.label, labelX, ty, t, !avail ? DIM : WHITE);
         }
 
-        // patch (Greyscale, Color and Accent draw their XOXO marks instead, with no box)
+        // patch (Greyscale, Color and Accent show their XOXO marks instead)
         int[] marks = row.marks();
         if (marks != null) {
             // what's behind the marks, so they can be kept clear of it
@@ -769,17 +769,9 @@ public final class Ui {
         Object patch = marks != null ? null : row.patch(pw, ph);
         if (patch != null) g.image(patch, px, y);
         if (!avail) veil(g, px, y, pw, ph, on ? CHOSEN : BLACK);
-
-        // dials (Melted): rotation and meltiness
-        int dx = px - 12 * k - dialsW + 6 * k;
-        for (int i = 0; i < parts.size(); i++) {
-            Part p = parts.get(i);
-            if (!p.dial()) continue;
-            int c = !chosen ? (on ? ICON : DIM) : slider ? (i == focusSec ? WHITE : ICON) : on ? BLACK : WHITE;
-            dial(g, dx, cy - dialD / 2, dialD, p, c);
-            if (chosen) hits.add(new Hit(dx, y, dialD, rowH, row.key, p, i));
-            dx += dialD + 12 * k;
-        }
+        // plain sliders (Detail, Pixel size) show their value where a patch would be
+        String v = row.value();
+        if (!v.isEmpty()) g.text(v, menuX + menuW - g.textWidth(v, t), ty, t, GREY);
     }
 
     /**
@@ -898,38 +890,6 @@ public final class Ui {
         return v & 0x7fffffff;
     }
 
-    /** Accent: the 8 colours in the bar, the chosen one full height. */
-    private void colorCells(Surface g, int x, int y, int w, int h, int[] colors, int chosenIdx) {
-        int n = colors.length, gp = Math.max(1, k), cw = Math.max(1, (w - gp * (n - 1)) / n), x0 = x + (w - (cw * n + gp * (n - 1))) / 2;
-        for (int i = 0; i < n; i++) {
-            int inset = i == chosenIdx ? 0 : h / 4;
-            g.fill(x0 + i * (cw + gp), y + inset, cw, h - 2 * inset, colors[i]);
-        }
-    }
-
-    private int barWidth;
-
-    private void dial(Surface g, int x, int y, int d, Part p, int ink) {
-        double ce = (d - 1) / 2.0;
-        boolean[] ring = new boolean[d * d];
-        for (int yy = 0; yy < d; yy++) for (int xx = 0; xx < d; xx++) {
-            double r = Math.hypot(xx - ce, yy - ce);
-            ring[yy * d + xx] = r <= d / 2.0 - 0.3 && r >= d / 2.0 - 0.3 - 2 * k;
-        }
-        runs(g, ring, x, y, d, ink);
-        // rotation: all the way round; meltiness: a 270-degree sweep
-        double deg = p.steps() > 6 ? p.get() * 360.0 / p.steps() : p.get() * 270.0 / (p.steps() - 1);
-        double a = Math.toRadians(deg - 90);
-        for (int i = 0; i <= d / 2 - 3 * k; i += k) {
-            int px = (int) Math.round(x + ce + Math.cos(a) * i), py = (int) Math.round(y + ce + Math.sin(a) * i);
-            g.fill(px - k, py - k, 2 * k, 2 * k, ink);
-        }
-    }
-
-    private void outline(Surface g, int x, int y, int w, int h, int th, int c) {
-        g.fill(x, y, w, th, c); g.fill(x, y + h - th, w, th, c); g.fill(x, y, th, h, c); g.fill(x + w - th, y, th, h, c);
-    }
-
     private void veil(Surface g, int x, int y, int w, int h, int c) { for (int yy = 0; yy < h; yy += 2 * k) g.fill(x, y + yy, w, k, c); }
 
     // ---- patches
@@ -964,37 +924,12 @@ public final class Ui {
         });
     }
 
-    /** Colour mode: the lighter colours of the photo's palette (they show up best on black). */
-    private int[] patchColors() {
-        int[] pal = paletteByLight();
-        if (pal == null || pal.length < 2) return new int[]{GREY, WHITE};
-        int n = Math.min(4, pal.length);
-        int[] out = new int[n];
-        for (int i = 0; i < n; i++) out[i] = pal[pal.length - 1 - i * Math.max(1, pal.length / (2 * n))];
-        return out;
-    }
-
-    private int[] lightTones() {
-        int[] all = greyValues(s.greyTones);
-        int[] out = new int[all.length - 1];
-        for (int i = 0; i < out.length; i++) { int v = all[all.length - 1 - i]; out[i] = 0xff000000 | v << 16 | v << 8 | v; }
-        return out;
-    }
-
     private static int[] greyValues(int n) {
         n = Math.max(2, Math.min(8, n));
         double gamma = Math.log(255.0 / 96.0) / Math.log(2.0);
         int[] v = new int[n];
         for (int i = 0; i < n; i++) v[i] = n == 3 && i == 1 ? 96 : (int) Math.round(255 * Math.pow((double) i / (n - 1), gamma));
         return v;
-    }
-
-    private Object bands(String key, int pw, int ph, int[] colors) {
-        return cached(key + "|" + pw + "x" + ph + "|" + Arrays.toString(colors), () -> {
-            int[] out = new int[pw * ph];
-            for (int x = 0; x < pw; x++) { int c = colors[Math.min(colors.length - 1, x * colors.length / pw)]; for (int y = 0; y < ph; y++) out[y * pw + x] = c; }
-            return new Engine.Image(pw, ph, out);
-        });
     }
 
     private static boolean light(int c) { return (0.299 * ((c >> 16) & 255) + 0.587 * ((c >> 8) & 255) + 0.114 * (c & 255)) > 118; }
@@ -1028,28 +963,6 @@ public final class Ui {
 
     private final Map<String, int[]> palettes = new HashMap<>();
     static final int MARK_OFF = 0xff333333;
-
-    /**
-     * The XOXO logo as a scale: two rows of four marks (X O X O / O X O X), one per step. Marks
-     * for what's included light up in that tone or colour; the rest stay dark.
-     */
-    private Object marksPatch(String key, int pw, int ph, int[] lit) {
-        return cached("marks|" + key + "|" + pw + "x" + ph + "|" + Arrays.toString(lit), () -> {
-            int[] out = new int[pw * ph];
-            Arrays.fill(out, CHOSEN);
-            int d = ph / 2, x0 = (pw - 4 * d) / 2;
-            boolean[] xs = Engine.stamp(Style.STITCH, d), os = Engine.stamp(Style.BEADS, d);
-            for (int i = 0; i < 8; i++) {
-                int r = i / 4, c = i % 4;
-                boolean isX = (r + c) % 2 == 0;
-                int color = i < lit.length ? lit[i] : MARK_OFF;
-                boolean[] m = isX ? xs : os;
-                for (int yy = 0; yy < d; yy++) for (int xx = 0; xx < d; xx++)
-                    if (m[yy * d + xx]) { int px = x0 + c * d + xx, py = r * d + yy; if (px >= 0 && px < pw) out[py * pw + px] = color; }
-            }
-            return new Engine.Image(pw, ph, out);
-        });
-    }
 
     private static int[] pad8(int[] lit) {
         int[] out = new int[8];
@@ -1130,21 +1043,6 @@ public final class Ui {
         }
         return 0xff000000 | r << 16 | g << 8 | bl;
     }
-
-    /** Greyscale: one mark per tone in use, black to white. */
-    private Object tonesPatch(int pw, int ph) { return marksPatch("tones", pw, ph, greyColors()); }
-
-    /** Color: one mark per step of the Colors slider, each showing a colour from the photo's palette. */
-    private Object colorPatch(int pw, int ph) {
-        int[] pal = paletteByLight();
-        int steps = (s.colors - 4) / 4 + 1;
-        int[] lit = new int[steps];
-        for (int i = 0; i < steps; i++) lit[i] = pal == null ? GREY : pal[(int) Math.round(i * (pal.length - 1) / (double) Math.max(1, steps - 1))];
-        return marksPatch("colors", pw, ph, lit);
-    }
-
-    /** The accent colour itself. */
-    private Object accentPatch(int pw, int ph) { return bands("accent", pw, ph, new int[]{Settings.SWATCHES[s.swatch]}); }
 
     // ---- preview
 
@@ -1356,8 +1254,8 @@ public final class Ui {
             s.accent = Boolean.parseBoolean(m.getOrDefault("accentOn", "false"));
             s.swatch = clamp(Integer.parseInt(m.getOrDefault("swatch8", "0")), 0, Settings.SWATCHES.length - 1);
             s.accentRange = clamp(Integer.parseInt(m.getOrDefault("accentAmount", "" + Settings.ACCENT_DEFAULT)), 0, Settings.RANGE_DEGREES.length - 1);
-            s.cells = clamp(Integer.parseInt(m.getOrDefault("cells", "96")), 16, 256);
-            s.cellSize = clamp(Integer.parseInt(m.getOrDefault("cell", "15")), 2, 40);
+            s.cells = Settings.DETAIL[Settings.nearest(Settings.DETAIL, Integer.parseInt(m.getOrDefault("cells", "96")))];
+            s.cellSize = Settings.PIXEL[Settings.nearest(Settings.PIXEL, Integer.parseInt(m.getOrDefault("cell", "15")))];
             replace = Boolean.parseBoolean(m.getOrDefault("replace", "false"));
             zoom = Boolean.parseBoolean(m.getOrDefault("zoom", "false"));
             String st = m.get("styles");

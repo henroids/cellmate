@@ -54,6 +54,17 @@ public final class Settings {
     public static final float[] ACCENT_MIN_VAL = {0.26f, 0.22f, 0.18f, 0.15f, 0.12f};
     public static final int ACCENT_DEFAULT = 2;
 
+    /** Detail (pixels across the short side) and Pixel size (output pixels per cell); the defaults are in the middle. */
+    public static final int[] DETAIL = {32, 48, 64, 80, 96, 128, 160, 192, 256};
+    public static final int[] PIXEL = {4, 6, 8, 11, 15, 20, 25, 32, 40};
+
+    /** Index of the closest value (for values saved before the sliders had fixed steps). */
+    public static int nearest(int[] values, int v) {
+        int best = 0;
+        for (int i = 1; i < values.length; i++) if (Math.abs(values[i] - v) < Math.abs(values[best] - v)) best = i;
+        return best;
+    }
+
     public boolean color = false;   // false = greyscale
     public int greyTones = 3;       // 2 (black and white) .. 8
     public int colors = 12;         // 4..32, colour mode
@@ -77,10 +88,15 @@ public final class Settings {
 
     public Settings copy() {
         Settings s = new Settings();
-        s.color = color; s.greyTones = greyTones; s.colors = colors; s.accent = accent; s.swatch = swatch;
-        s.accentRange = accentRange; s.cells = cells; s.cellSize = cellSize;
-        for (int i = 0; i < knob.length; i++) s.knob[i] = knob[i].clone();
+        s.set(this);
         return s;
+    }
+
+    /** Takes every value from o. */
+    public void set(Settings o) {
+        color = o.color; greyTones = o.greyTones; colors = o.colors; accent = o.accent; swatch = o.swatch;
+        accentRange = o.accentRange; cells = o.cells; cellSize = o.cellSize;
+        for (int i = 0; i < knob.length; i++) knob[i] = o.knob[i].clone();
     }
 
     int accentColor() { return SWATCHES[swatch]; }
