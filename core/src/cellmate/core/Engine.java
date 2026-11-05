@@ -307,7 +307,7 @@ public final class Engine {
         return new Image(w, h, out);
     }
 
-    static boolean[] stamp(Settings.Style style, int c) {
+    public static boolean[] stamp(Settings.Style style, int c) {
         boolean[] s = new boolean[c * c];
         if (style == Settings.Style.BEADS) {
             double centre = (c - 1) / 2.0;

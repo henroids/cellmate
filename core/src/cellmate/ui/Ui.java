@@ -19,6 +19,10 @@ public final class Ui {
     public enum Pick { INPUT_FOLDER, INPUT_IMAGE, OUTPUT }
     public enum Key { UP, DOWN, LEFT, RIGHT, A, B }
 
+    /** Toggle values, drawn as the logo's motif: a white O for on, a red X for off. */
+    static final String ON = "\u0001on", OFF = "\u0001off";
+    static final int MOTIF_WHITE = 0xffb3b3b3, MOTIF_RED = 0xff9e2023;
+
     static final int BLACK = 0xff000000, WHITE = 0xfffafafa, GREY = 0xff9a9a9a, DIM = 0xff4a4a4a, ICON = 0xff7a7a7a;
 
     private final Host host;
@@ -94,7 +98,7 @@ public final class Ui {
             }, null));
         r.add(new Row("Zoom", "Preview zoom", () -> zoom ? "1:1" : "Fit", d -> { zoom = !zoom; changed(); }, null));
         for (Style st : Style.values())
-            r.add(new Row("style:" + st.name(), st.label, () -> styleOn[st.ordinal()] ? "On" : "Off",
+            r.add(new Row("style:" + st.name(), st.label, () -> styleOn[st.ordinal()] ? ON : OFF,
                     d -> { styleOn[st.ordinal()] = !styleOn[st.ordinal()]; previewStyle = st; changed(); }, null));
         r.add(new Row("Mode", "Mode", () -> s.color ? "Color" : "Greyscale", d -> { s.color = !s.color; changed(); }, null));
         if (s.color)
@@ -414,6 +418,15 @@ public final class Ui {
             g.text(row.label, menuX + 10 * k, ty, t, on ? BLACK : WHITE);
             String v = row.value.get();
             int right = menuX + menuW - 14 * k;
+            if (v.equals(ON) || v.equals(OFF)) {
+                boolean isOn = v.equals(ON);
+                int d = t - 4 * k;   // icon size, about the height of a capital letter row
+                int ix = right - d, iy = y + (rowH - d) / 2;
+                // On the white selection bar the white O turns black, like the text does.
+                motif(g, ix, iy, d, isOn, isOn ? (on ? BLACK : MOTIF_WHITE) : MOTIF_RED);
+                if (on) { leftArrowX = ix; valueMidX = ix + d / 2; }
+                continue;
+            }
             int labelEnd = menuX + 10 * k + g.textWidth(row.label, t) + 16 * k;
             boolean arrows = on && row.change != null;
             int arrowW = arrows ? 6 * k : 0, gap = arrows ? 6 * k : 0;
@@ -504,6 +517,20 @@ public final class Ui {
     }
 
     // ------------------------------------------------------------------ pixel shapes
+
+    /** The logo's O (a bead) or X (a cross stitch), d pixels square, drawn pixel-exact. */
+    private void motif(Surface g, int x, int y, int d, boolean o, int color) {
+        boolean[] m = Engine.stamp(o ? Style.BEADS : Style.STITCH, d);
+        for (int yy = 0; yy < d; yy++) {
+            int xx = 0;
+            while (xx < d) {
+                if (!m[yy * d + xx]) { xx++; continue; }
+                int start = xx;
+                while (xx < d && m[yy * d + xx]) xx++;
+                g.fill(x + start, y + yy, xx - start, 1, color);
+            }
+        }
+    }
 
     private void triangle(Surface g, int x, int cy, int w, boolean left, int color) {
         for (int i = 0; i < w; i++) {
