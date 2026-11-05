@@ -1,0 +1,9 @@
+build/
+.gradle/
+android/app/build/
+android/.gradle/
+local.properties
+*.class
+*.apk
+*.zip
+android/cellmate.keystore

@@ -1,0 +1,76 @@
+name: Build
+
+# Every push to main builds the Android APK and the Windows app and puts both on the
+# "latest" release page, ready to download.
+on:
+  push:
+    branches: [main, build]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.9' }
+      - name: Signing key
+        env:
+          KEYSTORE: ${{ secrets.CELLMATE_KEYSTORE }}
+        run: if [ -n "$KEYSTORE" ]; then echo "$KEYSTORE" | base64 -d > android/cellmate.keystore; fi
+      - name: Build APK
+        run: gradle -p android assembleRelease --no-daemon
+        env:
+          CELLMATE_KEY_PASSWORD: ${{ secrets.CELLMATE_KEY_PASSWORD }}
+          VERSION_CODE: ${{ github.run_number }}
+          VERSION_NAME: 1.${{ github.run_number }}
+      - run: cp android/app/build/outputs/apk/release/app-release.apk Cellmate.apk
+      - uses: actions/upload-artifact@v4
+        with: { name: android, path: Cellmate.apk }
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - name: Compile
+        shell: bash
+        run: |
+          mkdir -p build/classes build/jar
+          javac --release 17 -d build/classes $(find core/src desktop/src -name '*.java')
+          cp desktop/resources/* build/classes/
+          jar --create --file build/jar/cellmate.jar --main-class cellmate.desktop.Main -C build/classes .
+      - name: Package
+        shell: bash
+        run: |
+          jpackage --type app-image --name Cellmate --input build/jar --main-jar cellmate.jar \
+            --main-class cellmate.desktop.Main --icon desktop/cellmate.ico --add-modules java.desktop \
+            --java-options "-Dsun.java2d.uiScale=1" --app-version 1.0.${{ github.run_number }} \
+            --vendor henroids --dest build/app
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path build/app/Cellmate -DestinationPath Cellmate-Windows.zip
+      - uses: actions/upload-artifact@v4
+        with: { name: windows, path: Cellmate-Windows.zip }
+
+  release:
+    needs: [android, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { merge-multiple: true }
+      - name: Publish to the "latest" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag --repo ${{ github.repository }} || true
+          gh release create latest Cellmate.apk Cellmate-Windows.zip --repo ${{ github.repository }} \
+            --target ${{ github.sha }} --title "Cellmate (latest build)" \
+            --notes "Build ${{ github.run_number }}. Cellmate.apk for Android; Cellmate-Windows.zip for Windows (unzip, then run Cellmate.exe)."

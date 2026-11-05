@@ -1,0 +1,47 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'cellmate.android'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.henroids.cellmate'
+        minSdk 26
+        targetSdk 34
+        versionCode Integer.parseInt(System.getenv('VERSION_CODE') ?: '1')
+        versionName System.getenv('VERSION_NAME') ?: '0.1'
+    }
+
+    // The filters and the menu are shared with the desktop app.
+    sourceSets {
+        main { java.srcDirs += ['../../core/src'] }
+    }
+
+    // Signed with the key from the CELLMATE_KEYSTORE secret (decoded by the workflow), so each
+    // build installs over the last one. Without it, Android's debug key is used.
+    def ks = file('../cellmate.keystore')
+    signingConfigs {
+        cellmate {
+            storeFile ks
+            storePassword System.getenv('CELLMATE_KEY_PASSWORD') ?: ''
+            keyAlias 'cellmate'
+            keyPassword System.getenv('CELLMATE_KEY_PASSWORD') ?: ''
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig ks.exists() ? signingConfigs.cellmate : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint { abortOnError false; checkReleaseBuilds false }
+}
