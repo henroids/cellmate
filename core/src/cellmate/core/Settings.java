@@ -27,34 +27,39 @@ public final class Settings {
         public int steps() { return values.length; }
     }
 
-    private static final double[] RING_OUTER = {0.36, 0.40, 0.44, 0.47, 0.50};
-    private static final double[] RING_HOLE = {0.08, 0.11, 0.14, 0.17, 0.20, 0.23, 0.26};
-    private static final double[] SOLID_SIZE = {0.55, 0.65, 0.75, 0.85, 0.93, 1.0};
+    // Every setting's default is the middle step, so each can go either way. The defaults are
+    // the looks the styles have always had.
+    private static final double[] RING_OUTER = {0.42, 0.46, 0.50, 0.54, 0.58};   // past 0.5 beads start to fuse
+    private static final double[] RING_HOLE = {0.11, 0.14, 0.17, 0.20, 0.23};
+    private static final double[] SOLID_SIZE = {0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4};   // past 1.0 squares overlap
 
     public static final Knob[][] KNOBS = {
-        /* BORDER  */ {new Knob("Border size", Kind.SLIDER, 2, 0.015, 0.03, 0.045, 0.065, 0.09, 0.12)},
-        /* ROUNDED */ {new Knob("Roundness", Kind.SLIDER, 2, 0.06, 0.12, 0.2, 0.28, 0.36, 0.44)},
-        /* JITTER  */ {new Knob("Jitter", Kind.SLIDER, 2, 0.015, 0.03, 0.05, 0.07, 0.09, 0.11)},
-        /* SOLID   */ {new Knob("Light squares", Kind.SLIDER, 5, SOLID_SIZE), new Knob("Dark squares", Kind.SLIDER, 5, SOLID_SIZE)},
-        /* STITCH  */ {new Knob("Thickness", Kind.SLIDER, 3, 1, 2, 3, 4, 5, 6)},   // twenty-fourths of a cell
-        /* BEADS   */ {new Knob("Outer circle", Kind.SLIDER, 4, RING_OUTER), new Knob("Inner circle", Kind.SLIDER, 3, RING_HOLE)},
-        /* MELTED  */ {new Knob("Outer circle", Kind.SLIDER, 4, RING_OUTER), new Knob("Inner circle", Kind.SLIDER, 3, RING_HOLE),
-                       new Knob("Rotation", Kind.DIAL, 0, 0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330),
-                       new Knob("Meltiness", Kind.DIAL, 0, 1, 2, 3, 4, 5)},
+        /* BORDER  */ {new Knob("Border size", Kind.SLIDER, 2, 0.015, 0.03, 0.045, 0.065, 0.09)},
+        /* ROUNDED */ {new Knob("Roundness", Kind.SLIDER, 2, 0.08, 0.14, 0.2, 0.28, 0.36)},
+        /* JITTER  */ {new Knob("Jitter", Kind.SLIDER, 2, 0.02, 0.035, 0.05, 0.07, 0.09)},
+        /* SOLID   */ {new Knob("Light squares", Kind.SLIDER, 4, SOLID_SIZE), new Knob("Dark squares", Kind.SLIDER, 4, SOLID_SIZE)},
+        /* STITCH  */ {new Knob("Thickness", Kind.SLIDER, 2, 2, 3, 4, 5, 6)},   // twenty-fourths of a cell
+        /* BEADS   */ {new Knob("Outer circle", Kind.SLIDER, 2, RING_OUTER), new Knob("Inner circle", Kind.SLIDER, 2, RING_HOLE)},
+        /* MELTED  */ {new Knob("Outer circle", Kind.SLIDER, 2, RING_OUTER), new Knob("Inner circle", Kind.SLIDER, 2, RING_HOLE),
+                       new Knob("Rotation", Kind.SLIDER, 3, -90, -60, -30, 0, 30, 60, 90),
+                       new Knob("Meltiness", Kind.SLIDER, 2, 0.4, 0.7, 1.0, 1.3, 1.6)},
     };
 
     /** The 8 accent colours: the same bright family as the colour patch. */
-    public static final int[] SWATCHES = {0xffe0403a, 0xfff08a2c, 0xfff2cf3a, 0xff4cb84f, 0xff2ab3b0, 0xff3d7be0, 0xff9050d6, 0xffe85aa8};
-    public static final String[] SWATCH_NAMES = {"Red", "Orange", "Yellow", "Green", "Teal", "Blue", "Purple", "Pink"};
-    public static final String[] RANGE_NAMES = {"Narrow", "Medium", "Wide"};
-    public static final float[] RANGE_DEGREES = {14, 26, 42};
+    public static final int[] SWATCHES = {0xffe93e8f, 0xffff6a1c, 0xfff6d55c, 0xff44d468, 0xff3caea3, 0xff2278ff, 0xff773ca6, 0xffa77d50};
+    public static final String[] SWATCH_NAMES = {"Pink", "Orange", "Yellow", "Green", "Teal", "Blue", "Purple", "Brown"};
+    /** Accent amount, 5 steps: how wide a hue band, and how dull and dark a colour may be, and still take the accent. */
+    public static final float[] RANGE_DEGREES = {10, 18, 26, 36, 50};
+    public static final float[] ACCENT_MIN_SAT = {0.40f, 0.34f, 0.28f, 0.22f, 0.16f};
+    public static final float[] ACCENT_MIN_VAL = {0.26f, 0.22f, 0.18f, 0.15f, 0.12f};
+    public static final int ACCENT_DEFAULT = 2;
 
     public boolean color = false;   // false = greyscale
     public int greyTones = 3;       // 2 (black and white) .. 8
     public int colors = 12;         // 4..32, colour mode
     public boolean accent = false;  // greyscale only
     public int swatch = 0;          // 0..7
-    public int accentRange = 1;     // index into RANGE_NAMES
+    public int accentRange = ACCENT_DEFAULT;   // accent amount, 0..4
     public int cells = 96;          // pixels across the short side
     public int cellSize = 15;       // output pixels per cell
     public final int[][] knob = defaults();

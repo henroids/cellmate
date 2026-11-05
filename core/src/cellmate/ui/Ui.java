@@ -27,7 +27,12 @@ public final class Ui {
     public enum Pick { INPUT, INPUT_FOLDER, INPUT_IMAGE, OUTPUT }
     public enum Key { UP, DOWN, LEFT, RIGHT, A, B, PREV, NEXT, PAGE_PREV, PAGE_NEXT, SAVE, RESET }
 
-    static final int BLACK = 0xff000000, WHITE = 0xfffafafa, GREY = 0xff9a9a9a, DIM = 0xff4a4a4a, ICON = 0xff7a7a7a;
+    /** Background of a chosen row (and the empty part of its progress bar). */
+    static final int CHOSEN = 0xff222222;
+    /** The one light grey: the selection bar, text, fills and the patches' light squares (no pure white anywhere). */
+    static final int HILITE = 0xffbcbcbc;
+
+    static final int BLACK = 0xff000000, WHITE = HILITE, GREY = 0xff9a9a9a, DIM = 0xff4a4a4a, ICON = 0xff7a7a7a;
 
     private final Host host;
     private final Settings s = new Settings();
@@ -90,6 +95,7 @@ public final class Ui {
         void set(int v);
         boolean dial();
         String name();
+        default String full() { return name(); }
     }
 
     private Part knobPart(Style st, int i) {
@@ -97,9 +103,17 @@ public final class Ui {
         return new Part() {
             public int steps() { return kn.steps(); }
             public int get() { return s.knob[st.ordinal()][i]; }
-            public void set(int v) { s.knob[st.ordinal()][i] = clamp(v, 0, kn.steps() - 1); changed(); }
-            public boolean dial() { return kn.kind == Kind.DIAL; }
+            public void set(int v) {
+                s.knob[st.ordinal()][i] = clamp(v, 0, kn.steps() - 1);
+                int now = s.knob[st.ordinal()][i];
+                int mid = kn.def;
+                String where = now == mid ? "default" : now < mid ? (mid - now) + " below default" : (now - mid) + " above default";
+                message = st.label + "  " + kn.name + "  " + (kn.name.equals("Rotation") ? (int) kn.values[now] + " deg" : where);
+                changed();
+            }
+            public boolean dial() { return false; }   // every setting is a bar segment now
             public String name() { return SHORT.getOrDefault(kn.name, kn.name); }
+            public String full() { return kn.name; }
         };
     }
 
@@ -108,7 +122,7 @@ public final class Ui {
     static {
         String[] pairs = {"Border size", "Border", "Roundness", "Round", "Jitter", "Jitter", "Light squares", "Light",
                 "Dark squares", "Dark", "Thickness", "Thick", "Outer circle", "Outer", "Inner circle", "Inner",
-                "Rotation", "Turn", "Meltiness", "Melt"};
+                "Rotation", "Turn", "Meltiness", "Melt", "Accent color", "Accent"};
         for (int i = 0; i < pairs.length; i += 2) SHORT.put(pairs[i], pairs[i + 1]);
     }
 
@@ -116,7 +130,14 @@ public final class Ui {
         return new Part() {
             public int steps() { return steps; }
             public int get() { return get.getAsInt(); }
-            public void set(int v) { set.accept(clamp(v, 0, steps - 1)); changed(); }
+            public void set(int v) {
+                int now = clamp(v, 0, steps - 1), mid = Settings.ACCENT_DEFAULT;
+                set.accept(now);
+                message = name.equals("Accent amount") ? "Accent amount  " + (now == mid ? "default" : now < mid ? (mid - now) + " below default" : (now - mid) + " above default")
+                        : name.equals("Accent color") ? "Accent  " + Settings.SWATCH_NAMES[now]
+                        : name + "  " + (now + 1) + " / " + steps;
+                changed();
+            }
             public boolean dial() { return false; }
             public String name() { return name; }
         };
@@ -140,6 +161,12 @@ public final class Ui {
         Style style() { return null; }
         /** Box rows whose sections are colour cells (Accent). */
         int[] cellColors() { return null; }
+        /** Colours laid along the bar's fill instead of white (Greyscale tones, Color palette). */
+        int[] bands() { return null; }
+        /** The 8 XOXO marks' colours, for rows that show marks instead of a patch. */
+        int[] marks() { return null; }
+        /** Accent: the marks themselves are tapped to pick, and the bar fills just past the label. */
+        boolean picks() { return false; }
     }
 
     private final class ValueRow extends Row {
@@ -174,12 +201,14 @@ public final class Ui {
         r.add(new ValueRow("Output", "Output", () -> output != null ? outputName : "Choose", null, () -> host.pick(Pick.OUTPUT)));
         for (Style st : Style.values()) r.add(new StyleRow(st));
         r.add(new Row("Greyscale", "Greyscale") {
-            final List<Part> p = Collections.singletonList(part("Tones", 7, () -> s.greyTones - 2, v -> s.greyTones = v + 2));
+            final List<Part> p = Collections.singletonList(part("Grey tones", 7, () -> s.greyTones - 2, v -> s.greyTones = v + 2));
             boolean box() { return true; }
             boolean chosen() { return !s.color; }
             void choose() { if (s.color) { s.color = false; changed(); } }
             List<Part> parts() { return p; }
             Object patch(int w, int h) { return tonesPatch(w, h); }
+            int[] bands() { return greyColors(); }
+            int[] marks() { return pad8(greyColors()); }
         });
         r.add(new Row("Color", "Color") {
             final List<Part> p = Collections.singletonList(part("Colors", 8, () -> (s.colors - 4) / 4, v -> s.colors = 4 + 4 * v));
@@ -188,9 +217,14 @@ public final class Ui {
             void choose() { if (!s.color) { s.color = true; changed(); } }
             List<Part> parts() { return p; }
             Object patch(int w, int h) { return colorPatch(w, h); }
+            int[] bands() { return paletteByLight(); }
+            int[] marks() { return colorMarks(); }
         });
         r.add(new Row("Accent", "Accent") {
-            final List<Part> p = Collections.singletonList(part("Accent", Settings.SWATCHES.length, () -> s.swatch, v -> s.swatch = v));
+            // the bar is the amount; the colour is picked on the marks (or with L/R after switching section)
+            final List<Part> p = Arrays.asList(
+                    part("Accent amount", Settings.RANGE_DEGREES.length, () -> s.accentRange, v -> s.accentRange = v),
+                    part("Accent color", Settings.SWATCHES.length, () -> s.swatch, v -> s.swatch = v));
             boolean box() { return true; }
             boolean available() { return !s.color; }
             boolean chosen() { return s.accent && !s.color; }
@@ -200,6 +234,8 @@ public final class Ui {
             }
             List<Part> parts() { return p; }
             Object patch(int w, int h) { return accentPatch(w, h); }
+            int[] marks() { return Settings.SWATCHES; }
+            boolean picks() { return true; }
             int[] cellColors() { return Settings.SWATCHES; }
         });
         if (items != null && items.size() > 1)
@@ -329,25 +365,28 @@ public final class Ui {
         boolean contains(int px, int py) { return px >= x && py >= y && px < x + w && py < y + h; }
     }
 
-    private static final Object ROW = new Object(), PAGE_LEFT = new Object(), PAGE_RIGHT = new Object(), HELP = new Object();
+    private static final Object ROW = new Object(), SWATCH = new Object(), PAGE_LEFT = new Object(), PAGE_RIGHT = new Object(), HELP = new Object();
     private Hit down;
-    private int downY, lastY;
+    private int downX, downY, lastY;
     private boolean dragging, sliding;
 
     public void pointerDown(int x, int y) {
-        downY = lastY = y; dragging = false; sliding = false; down = null;
+        downX = x; downY = lastY = y; dragging = false; sliding = false; down = null;
         if (screen != Screen.MENU || popup != null) return;
         for (int i = hits.size() - 1; i >= 0; i--) if (hits.get(i).contains(x, y)) { down = hits.get(i); break; }
-        if (down != null && down.what instanceof Part) { slide(down, x, y); sliding = true; }
     }
 
     public void pointerMove(int x, int y) {
         if (screen != Screen.MENU || popup != null) return;
         if (sliding) { slide(down, x, y); return; }
+        // a sideways drag on a chosen row's bar moves its setting (a plain tap chooses or un-chooses the row)
+        if (!dragging && down != null && down.what instanceof Part && Math.abs(x - downX) > 6 * k && Math.abs(x - downX) > Math.abs(y - downY)) {
+            sliding = true; slide(down, x, y); return;
+        }
         if (!dragging && Math.abs(y - downY) > rowH / 2) dragging = true;
         if (dragging && rowH > 0) {
-            int moved = (lastY - y) / rowH;
-            if (moved != 0) { scrollBy(moved); lastY -= moved * rowH; }
+            int moved = (lastY - y) / (rowH + rowGap);
+            if (moved != 0) { scrollBy(moved); lastY -= moved * (rowH + rowGap); }
         }
     }
 
@@ -360,6 +399,7 @@ public final class Ui {
         if (down.what == PAGE_LEFT) { turnPage(-1); return; }
         if (down.what == PAGE_RIGHT) { turnPage(1); return; }
         if (down.what == HELP) { key((Key) helpKeys.get(down.index)); return; }
+        if (down.what == SWATCH) { pickSwatch(down.index); return; }
         List<Row> r = rows();
         int idx = -1;
         for (int i = 0; i < r.size(); i++) if (r.get(i).key.equals(down.row)) idx = i;
@@ -367,12 +407,21 @@ public final class Ui {
         Row row = r.get(idx);
         boolean wasSelected = row.key.equals(selectedKey);
         select(r, idx);
-        if (wasSelected) {
-            if (row.box()) row.choose();
-            else if (row.changeable() && x >= valueLeft && x < valueMid) row.change(-1);
-            else if (row.changeable()) row.change(1);
-            else row.activate();
-        }
+        if (row.box()) row.choose();   // one tap chooses, the next un-chooses
+        else if (wasSelected && row.changeable() && x >= valueLeft && x < valueMid) row.change(-1);
+        else if (wasSelected && row.changeable()) row.change(1);
+        else if (!row.changeable()) row.activate();
+        host.repaint();
+    }
+
+    /** A tap on one of Accent's marks: that colour becomes the accent (and turns it on). */
+    private void pickSwatch(int i) {
+        List<Row> r = rows();
+        for (int j = 0; j < r.size(); j++) if (r.get(j).key.equals("Accent")) select(r, j);
+        if (s.color) { message = "Accent works with Greyscale."; host.repaint(); return; }
+        if (s.accent && s.swatch == i) { s.accent = false; message = "Accent off."; }   // tapping the picked one again turns it off
+        else { s.swatch = i; s.accent = true; message = "Accent  " + Settings.SWATCH_NAMES[i]; }
+        changed();
         host.repaint();
     }
 
@@ -538,13 +587,14 @@ public final class Ui {
 
     // ================================================================== drawing
 
-    private int valueLeft, valueMid;
+    private int valueLeft, valueMid, rowGap;
 
     /** Draws everything. */
     public void draw(Surface g, int w, int h) {
         k = Math.max(1, Math.min(Math.round(h / 540f), Math.round(w / 640f)));
         t = 20 * k;          // pixel font size (one font pixel = k screen pixels)
         rowH = t + 8 * k;
+        rowGap = 8 * k;
         hits.clear();
         g.fill(0, 0, w, h, BLACK);
 
@@ -599,34 +649,29 @@ public final class Ui {
     private void drawMenu(Surface g) {
         List<Row> r = rows();
         int sel = selectedIndex(r);
-        int visible = Math.max(1, menuH / rowH);
+        int pitch = rowH + rowGap, visible = Math.max(1, (menuH + rowGap) / pitch);
         if (sel < scroll) scroll = sel;
         if (sel >= scroll + visible) scroll = sel - visible + 1;
         scroll = clamp(scroll, 0, Math.max(0, r.size() - visible));
-        int labelW = 0, widest = 0;
-        for (Row row : r) if (row.box()) {
-            labelW = Math.max(labelW, g.textWidth(row.label, t));
-            int dials = 0;
-            for (Part p : row.parts()) if (p.dial()) dials++;
-            widest = Math.max(widest, boxWidth(row.parts().size() - dials) + dials * ((t | 1) + 8 * k));
-        }
-        boxColumn = menuX + menuW - 14 * k - widest;
+        int labelW = 0;
+        for (Row row : r) if (row.box()) labelW = Math.max(labelW, g.textWidth(row.label, t));
+        barWidth = Math.max(4 * t, Math.min(6 * t, menuW / 4));
         g.clip(menuX, menuY, menuW, menuH);
         for (int i = scroll; i < r.size() && i < scroll + visible; i++) {
             Row row = r.get(i);
-            int y = menuY + (i - scroll) * rowH;
+            int y = menuY + (i - scroll) * pitch;
             boolean on = i == sel;
-            if (on) g.fill(menuX, y, menuW, rowH, WHITE);
+            if (on && !row.box()) g.fill(menuX, y, menuW, rowH, HILITE);   // slider rows are never light grey: see drawBoxRow
             hits.add(new Hit(menuX, y, menuW, rowH, row.key, ROW, 0));
             if (row.box()) drawBoxRow(g, row, y, on, labelW); else drawValueRow(g, row, y, on);
         }
         g.unclip();
         if (scroll > 0) triangleUp(g, menuX + menuW - 10 * k, menuY - 6 * k, 4 * k, true, DIM);
-        if (scroll + visible < r.size()) triangleUp(g, menuX + menuW - 10 * k, menuY + visible * rowH + 2 * k, 4 * k, false, DIM);
+        if (scroll + visible < r.size()) triangleUp(g, menuX + menuW - 10 * k, menuY + visible * pitch - rowGap + 2 * k, 4 * k, false, DIM);
     }
 
     private void drawValueRow(Surface g, Row row, int y, boolean on) {
-        int ty = y + (rowH - t) / 2, right = menuX + menuW - 14 * k;
+        int ty = y + (rowH - t) / 2, right = menuX + menuW - (on && row.changeable() ? 4 * k : 0);   // values end where the patches end
         g.text(row.label, menuX + 10 * k, ty, t, on ? BLACK : WHITE);
         boolean arrows = on && row.changeable();
         int arrowW = arrows ? 6 * k : 0, gap = arrows ? 6 * k : 0;
@@ -643,94 +688,226 @@ public final class Ui {
     }
 
     /**
-     * Label, sample patch, and the slider box. The box only appears once the row is chosen: a
-     * border in the row's ink, split into sections that fill with pixel blocks like a progress
-     * bar; dials sit after it.
+     * Label on the left, sample patch on the right. A chosen row gets a thin white outline. When a
+     * chosen row is highlighted, the highlight bar itself is the slider: it fills from the left in
+     * steps, one section per setting, and the name flips colour where the fill passes under it.
+     * Melted's two dials sit just left of the patch.
      */
     private void drawBoxRow(Surface g, Row row, int y, boolean on, int labelW) {
-        int ink = on ? BLACK : WHITE, cy = y + rowH / 2;
-        boolean avail = row.available();
-        g.text(row.label, menuX + 10 * k, y + (rowH - t) / 2, t, !avail ? DIM : ink);
-        int right = menuX + menuW - 14 * k;
+        int cy = y + rowH / 2, right = menuX + menuW - 14 * k;
+        boolean avail = row.available(), chosen = row.chosen();
         List<Part> parts = row.parts();
+        int focusSec = clamp(section.getOrDefault(row.key, 0), 0, Math.max(0, parts.size() - 1));
         int dials = 0;
         for (Part p : parts) if (p.dial()) dials++;
-        int bars = parts.size() - dials;
-        int bh = rowH - 2 * k, dialD = (t | 1);
-        int boxW = boxWidth(bars);
-        int boxX = boxColumn;   // all boxes start in one column, all patches in another
+        // the patch fills the bar's height and ends where the bar ends
+        int ph = rowH, pw = ph * 5 / 2, px = menuX + menuW - pw;
+        int dialD = t | 1, dialsW = dials * (dialD + 12 * k);
+        int labelX = menuX + 10 * k, ty = y + (rowH - t) / 2;
+        boolean slider = chosen && avail && !parts.isEmpty() && !row.picks();   // a chosen row always shows its setting
 
-        // patch, just left of the box
-        int ph = rowH - 10 * k, pw = ph * 2;
-        int px = boxX - 14 * k - pw;
-        Object patch = row.patch(pw, ph);
-        if (patch != null) g.image(patch, px, cy - ph / 2);
-        if (!avail) veil(g, px, cy - ph / 2, pw, ph, on ? WHITE : BLACK);
-
-        if (!row.chosen()) {
-            if (on && avail) outline(g, boxX, cy - bh / 2, boxW, bh, k, ICON);   // a hint of where the box will be
-            return;
+        if (row.picks() && chosen && avail) {
+            // Accent: the bar is the amount, filled in the picked colour; the least reaches just past the name
+            int fillColor = Settings.SWATCHES[s.swatch];
+            g.fill(menuX, y, menuW, rowH, CHOSEN);   // the empty part: the chosen grey, like the other sliders
+            int x1 = px - 12 * k, start = labelX + g.textWidth(row.label, t) + 14 * k, steps = Settings.RANGE_DEGREES.length;
+            int end = start + s.accentRange * (x1 - start) / (steps - 1);
+            List<int[]> fills = new ArrayList<>();
+            magma(g, menuX, y, x1 - menuX, rowH, end - menuX, fillColor, null, s.swatch * 7 + s.accentRange * 13 + 3, fills);
+            // drag or tap along the bar to set the amount (each step owns an equal stretch around its fill end)
+            int span = (x1 - start) / (steps - 1);
+            hits.add(new Hit(start - span / 2, y, span * steps, rowH, row.key, parts.get(0), 0));
+            g.text(row.label, labelX, ty, t, WHITE);
+            for (int[] f : fills) { g.clip(f[0], f[1], f[2], f[3]); g.text(row.label, labelX, ty, t, light(f[4]) ? BLACK : WHITE); g.unclip(); }
+        } else if (slider) {
+            g.fill(menuX, y, menuW, rowH, CHOSEN);                        // the empty part: the chosen grey
+            int x0 = menuX, x1 = px - 12 * k - dialsW;
+            List<Integer> idx = new ArrayList<>();
+            for (int i = 0; i < parts.size(); i++) if (!parts.get(i).dial()) idx.add(i);
+            int n = idx.size(), gap = n > 1 ? 3 * k : 0, secW = n == 0 ? 0 : (x1 - x0 - gap * (n - 1)) / n;
+            List<int[]> fills = new ArrayList<>();   // {x, y, w, h} pieces of fill, for the text flip
+            for (int j = 0; j < n; j++) {
+                Part p = parts.get(idx.get(j));
+                int sx = x0 + j * (secW + gap);
+                // empty at the lowest step, half way at the default (the middle), full at the top
+                int fw = row.bands() != null
+                        ? (int) Math.round((p.get() + 1) * secW / (double) p.steps())   // a count: even the lowest shows its colours
+                        : (int) Math.round(p.get() * secW / (double) Math.max(1, p.steps() - 1));
+                int fillColor = row.cellColors() != null ? row.cellColors()[p.get()] : (n == 1 || !on || idx.get(j) == focusSec) ? WHITE : ICON;
+                magma(g, sx, y, secW, rowH, fw, fillColor, row.bands(), p.get() * 7 + j * 31 + row.key.length(), fills);
+                if (j > 0) g.fill(sx - gap, y, gap, rowH, BLACK);   // a thin black cut between sections
+                hits.add(new Hit(sx, y, secW, rowH, row.key, p, idx.get(j)));
+            }
+            // each segment says what it does; the words flip colour under the fill
+            for (int j = 0; j < n; j++) {
+                Part p = parts.get(idx.get(j));
+                int sx = x0 + j * (secW + gap);
+                String word = fitText(g, n == 1 ? p.full() : p.name(), secW - 8 * k, t);
+                int wx = n == 1 ? labelX : sx + (secW - g.textWidth(word, t)) / 2;
+                g.clip(sx, y, secW, rowH);
+                g.text(word, wx, ty, t, WHITE);
+                for (int[] f : fills) {
+                    if (f[0] + f[2] <= sx || f[0] >= sx + secW || !light(f[4])) continue;
+                    g.clip(f[0], f[1], f[2], f[3]); g.text(word, wx, ty, t, BLACK); g.unclip();
+                }
+                g.unclip();
+            }
+        } else {
+            if (on || (chosen && avail)) g.fill(menuX, y, menuW, rowH, CHOSEN);   // selected or chosen: always the dark grey
+            g.text(row.label, labelX, ty, t, !avail ? DIM : WHITE);
         }
-        int focusSec = clamp(section.getOrDefault(row.key, 0), 0, parts.size() - 1);
-        boolean multi = parts.size() > 1;
-        outline(g, boxX, cy - bh / 2, boxW, bh, 2 * k, ink);
-        int inner = boxW - 8 * k, sx = boxX + 4 * k, secGap = 4 * k;
-        int secW = bars == 0 ? 0 : (inner - secGap * (bars - 1)) / bars;
-        int bi = 0, di = 0;
+
+        // patch (Greyscale, Color and Accent draw their XOXO marks instead, with no box)
+        int[] marks = row.marks();
+        if (marks != null) {
+            // what's behind the marks, so they can be kept clear of it
+            int behind = on || (chosen && avail) ? CHOSEN : BLACK;
+            int[][] spots = drawMarks(g, px, y, pw, ph, marks, behind);
+            if (row.picks() && avail) for (int i = 0; i < spots.length; i++)
+                hits.add(new Hit(spots[i][0], spots[i][1], spots[i][2], spots[i][3], row.key, SWATCH, i));
+        }
+        Object patch = marks != null ? null : row.patch(pw, ph);
+        if (patch != null) g.image(patch, px, y);
+        if (!avail) veil(g, px, y, pw, ph, on ? CHOSEN : BLACK);
+
+        // dials (Melted): rotation and meltiness
+        int dx = px - 12 * k - dialsW + 6 * k;
         for (int i = 0; i < parts.size(); i++) {
             Part p = parts.get(i);
-            boolean focused = on && (!multi || i == focusSec);
-            int c = !on ? WHITE : (focused ? BLACK : ICON);
-            if (!on && multi && i != focusSec) c = GREY;
-            if (p.dial()) {
-                int dx = boxX + boxW + 8 * k + di * (dialD + 8 * k);
-                dial(g, dx, cy - dialD / 2, dialD, p, c);
-                hits.add(new Hit(dx, y, dialD, rowH, row.key, p, i));
-                di++;
-                continue;
-            }
-            int x0 = sx + bi * (secW + secGap);
-            if (bi > 0) g.fill(x0 - secGap / 2 - k / 2, cy - bh / 2, Math.max(1, k), bh, ink);   // section divider
-            blocks(g, x0, cy - bh / 2 + 3 * k, secW, bh - 6 * k, p, row.cellColors(), c, on ? WHITE : BLACK);
-            hits.add(new Hit(x0, y, secW, rowH, row.key, p, i));
-            bi++;
+            if (!p.dial()) continue;
+            int c = !chosen ? (on ? ICON : DIM) : slider ? (i == focusSec ? WHITE : ICON) : on ? BLACK : WHITE;
+            dial(g, dx, cy - dialD / 2, dialD, p, c);
+            if (chosen) hits.add(new Hit(dx, y, dialD, rowH, row.key, p, i));
+            dx += dialD + 12 * k;
         }
     }
 
     /**
-     * A pixelated progress bar: one block per step, filled up to the value. The setting's name
-     * sits inside and flips colour where the blocks pass under it, like loading-bar text.
+     * The fill of a bar section, with a ragged, molten leading edge: it wobbles row by row in
+     * whole font pixels, has a few chips knocked out just behind it and a few drips ahead of it.
+     * Completely empty or full sections stay straight. Each piece drawn is added to out.
      */
-    private void blocks(Surface g, int x, int y, int w, int h, Part p, int[] colors, int ink, int paper) {
-        int n = p.steps();
-        if (colors != null) {   // colour cells: all shown, the chosen one full height
-            int gap = Math.max(1, k), bw = Math.max(1, (w - gap * (n - 1)) / n), x0 = x + (w - (bw * n + gap * (n - 1))) / 2;
-            for (int i = 0; i < n; i++) {
-                int inset = i == p.get() ? 0 : h / 4;
-                g.fill(x0 + i * (bw + gap), y + inset, bw, h - 2 * inset, colors[i]);
-            }
+    private void magma(Surface g, int x, int y, int w, int h, int fw, int color, int[] bands, int seed, List<int[]> out) {
+        if (fw <= 0) return;
+        final int k = 2 * this.k;   // the magma's own, chunkier pixel
+        Painter paint = new Painter(g, x, fw, color, bands, out, y, h, k, seed);
+        if (fw >= w) {   // full: a straight front, but the seams inside still flow
+            for (int yy = y; yy < y + h; yy += k) paint.fill(x, yy, w, Math.min(k, y + h - yy));
+            paint.spatter(x + w);
             return;
         }
-        // fill in whole steps (the pixelated part), with a notch under each step boundary
-        int filledTo = x + (int) Math.round((p.get() + 1) * w / (double) n);
-        g.fill(x, y, filledTo - x, h, ink);
-        for (int i = 1; i < n; i++) {
-            int nx = x + (int) Math.round(i * w / (double) n);
-            g.fill(nx - k / 2, y + h - 2 * k, Math.max(1, k), 2 * k, nx < filledTo ? paper : ink);
+        int rows = Math.max(1, h / k);
+        double lean = Math.min(h * 1.5, w * 0.3);   // how far the bottom of the flow runs ahead of the top
+        for (int r = 0; r < rows; r++) {
+            int ry = y + r * k, rh = r == rows - 1 ? h - r * k : k;
+            // flowing in a tube: a rounded nose, bottom-heavy, the top trailing behind
+            double f = rows == 1 ? 1 : r / (double) (rows - 1);
+            double nose = lean * (Math.pow(f, 0.35) - 0.7);   // heavier at the bottom
+            double wave = Math.sin(r * 0.55 + seed * 1.7) * 1.3 + Math.sin(r * 1.37 + seed * 0.9) * 0.8;
+            int jitter = (int) Math.round(wave + (hash(r, seed) % 3 - 1) * 0.6);
+            int edge = (int) Math.round(fw + nose) + jitter * k;
+            edge = Math.max(0, Math.min(w, edge / k * k));
+            if (edge <= 0) continue;
+            paint.fill(x, ry, edge, rh);
+            int hsh = hash(r * 7 + 3, seed);
+            if (hsh % 9 == 0 && edge > 6 * k) g.fill(x + edge - 4 * k, ry, 2 * k, rh, CHOSEN);           // a chip
+            if (hsh % 7 == 1 && edge + 3 * k < w) paint.fill(x + edge + k, ry, k, rh);   // a drip
         }
-        String word = fitText(g, p.name(), w - 4 * k, t);
-        int tw = g.textWidth(word, t), tx = x + (w - tw) / 2, ty = y + (h - t) / 2 - 2 * k;
-        g.clip(x, y, Math.max(0, filledTo - x), h);           // over the fill: paper colour
-        g.text(word, tx, ty, t, paper);
-        g.unclip();
-        g.clip(filledTo, y, Math.max(0, x + w - filledTo), h); // over the empty part: ink
-        g.text(word, tx, ty, t, ink);
-        g.unclip();
+        // particles and specks thrown ahead of the front, more of them low down
+        int front = (int) Math.round(fw + lean * 0.3);
+        for (int i = 0; i < 24; i++) {
+            int a = hash(i * 11 + 5, seed), b = hash(i * 17 + 9, seed);
+            double depth = Math.pow((a % 1000) / 1000.0, 0.6);              // biased toward the bottom
+            int py = y + (int) (depth * (h - k)) / k * k;
+            double reach = (b % 1000) / 1000.0;
+            int px = x + (front - (int) ((1 - depth) * lean * 0.8) + (int) (reach * reach * 18 * k)) / k * k + 2 * k;
+            int size = (a >> 10) % 4 == 0 ? 2 * k : k;
+            if (px < x || px + size > x + w || py + size > y + h) continue;
+            paint.fill(px, py, size, size);
+        }
+        paint.spatter(x + Math.min(w, fw));
     }
 
-    private int boxColumn;
+    /**
+     * Fills pieces of a bar: one colour, or bands of colours laid along the filled length (the
+     * grey tones, or the palette). The seams between bands flow like the front of the fill:
+     * bottom-heavy and ragged, in the magma's chunky pixels. Every piece is recorded with its
+     * colour, for the text flip.
+     */
+    private static final class Painter {
+        final Surface g; final int x0, len, color, y0, h, gk, seed; final int[] bands; final List<int[]> out;
+        Painter(Surface g, int x0, int len, int color, int[] bands, List<int[]> out, int y0, int h, int gk, int seed) {
+            this.g = g; this.x0 = x0; this.len = Math.max(1, len); this.color = color; this.bands = bands; this.out = out;
+            this.y0 = y0; this.h = h; this.gk = gk; this.seed = seed;
+        }
 
-    private int boxWidth(int bars) { return Math.min(menuW * 2 / 5, Math.max(5 * t, bars * 4 * t)); }
+        /** Where the seam after band b sits on the pixel row at y. */
+        int seam(int b, int y) {
+            int n = bands.length;
+            double base = x0 + (b + 1) * len / (double) n;
+            double bandW = len / (double) n;
+            double lean = Math.min(h * 1.2, bandW * 0.9);
+            int rows = Math.max(1, h / gk), r = Math.max(0, Math.min(rows - 1, (y - y0) / gk));
+            double f = rows == 1 ? 1 : r / (double) (rows - 1);
+            double nose = lean * (Math.pow(f, 0.35) - 0.7);
+            double wave = Math.sin(r * 0.6 + (seed + b) * 1.9) * 1.2 + Math.sin(r * 1.3 + b * 2.3) * 0.7;
+            int v = (int) Math.round(base + nose + wave * gk);
+            return v / gk * gk;
+        }
+
+        void fill(int x, int y, int w, int hh) {
+            if (w <= 0 || hh <= 0) return;
+            if (bands == null || bands.length == 0) { put(x, y, w, hh, color); return; }
+            int n = bands.length, end = x + w, cx = x;
+            int[] seams = new int[n - 1];
+            for (int b = 0; b < n - 1; b++) seams[b] = Math.max(b == 0 ? Integer.MIN_VALUE : seams[b - 1], seam(b, y));
+            while (cx < end) {
+                int b = 0;
+                while (b < n - 1 && cx >= seams[b]) b++;
+                int stop = b < n - 1 ? Math.min(end, Math.max(cx + 1, seams[b])) : end;
+                put(cx, y, stop - cx, hh, bands[b]);
+                cx = stop;
+            }
+        }
+
+        /** Specks of each colour thrown over the seam into the next one, mostly low down. */
+        void spatter(int fillEnd) {
+            if (bands == null || bands.length < 2) return;
+            for (int b = 0; b < bands.length - 1; b++) {
+                for (int i = 0; i < 10; i++) {
+                    int a = hash(i * 13 + b * 101 + 7, seed), c = hash(i * 29 + b * 57 + 3, seed);
+                    double depth = Math.pow((a % 1000) / 1000.0, 0.55);
+                    int py = y0 + (int) (depth * (h - gk)) / gk * gk;
+                    int sx = seam(b, py);
+                    double reach = (c % 1000) / 1000.0;
+                    boolean ahead = (a >> 8) % 4 != 0;                  // mostly the earlier colour running ahead
+                    int px = (sx + (ahead ? 1 : -1) * (gk + (int) (reach * reach * 6 * gk))) / gk * gk;
+                    int size = (c >> 9) % 4 == 0 ? 2 * gk : gk;
+                    if (px < x0 || px + size > fillEnd) continue;
+                    put(px, py, size, size, bands[ahead ? b : b + 1]);
+                }
+            }
+        }
+
+        void put(int x, int y, int w, int hh, int c) { g.fill(x, y, w, hh, c); out.add(new int[]{x, y, w, hh, c}); }
+    }
+
+    private static int hash(int a, int b) {
+        int v = a * 73856093 ^ b * 19349663;
+        v ^= v >>> 13; v *= 0x5bd1e995; v ^= v >>> 15;
+        return v & 0x7fffffff;
+    }
+
+    /** Accent: the 8 colours in the bar, the chosen one full height. */
+    private void colorCells(Surface g, int x, int y, int w, int h, int[] colors, int chosenIdx) {
+        int n = colors.length, gp = Math.max(1, k), cw = Math.max(1, (w - gp * (n - 1)) / n), x0 = x + (w - (cw * n + gp * (n - 1))) / 2;
+        for (int i = 0; i < n; i++) {
+            int inset = i == chosenIdx ? 0 : h / 4;
+            g.fill(x0 + i * (cw + gp), y + inset, cw, h - 2 * inset, colors[i]);
+        }
+    }
+
+    private int barWidth;
 
     private void dial(Surface g, int x, int y, int d, Part p, int ink) {
         double ce = (d - 1) / 2.0;
@@ -773,7 +950,8 @@ public final class Ui {
     /** A sample of a style at the real pixel size (smaller only if two pixels wouldn't fit), in the current tones. */
     private Object stylePatch(Style st, int pw, int ph) {
         int cell = Math.max(2, Math.min(s.cellSize, ph / 2));
-        int[] values = s.color ? new int[]{0xfffafafa, Settings.SWATCHES[0], Settings.SWATCHES[5], Settings.SWATCHES[2]} : lightTones();
+        // always the same white and dark grey: the patch shows what the settings do, never the mode's colours
+        int[] values = {WHITE, CHOSEN};   // the app's one light grey and one dark grey
         String key = "style|" + st + "|" + pw + "x" + ph + "|" + cell + "|" + Arrays.toString(values) + "|" + Arrays.toString(s.knob[st.ordinal()]);
         return cached(key, () -> {
             int cols = (pw + cell - 1) / cell + 1, rows = (ph + cell - 1) / cell + 1;
@@ -784,6 +962,16 @@ public final class Ui {
             for (int y = 0; y < ph; y++) System.arraycopy(im.argb, y * im.width, out, y * pw, pw);
             return new Engine.Image(pw, ph, out);
         });
+    }
+
+    /** Colour mode: the lighter colours of the photo's palette (they show up best on black). */
+    private int[] patchColors() {
+        int[] pal = paletteByLight();
+        if (pal == null || pal.length < 2) return new int[]{GREY, WHITE};
+        int n = Math.min(4, pal.length);
+        int[] out = new int[n];
+        for (int i = 0; i < n; i++) out[i] = pal[pal.length - 1 - i * Math.max(1, pal.length / (2 * n))];
+        return out;
     }
 
     private int[] lightTones() {
@@ -809,24 +997,144 @@ public final class Ui {
         });
     }
 
-    /** All grey tones side by side, black to white. */
-    private Object tonesPatch(int pw, int ph) {
+    private static boolean light(int c) { return (0.299 * ((c >> 16) & 255) + 0.587 * ((c >> 8) & 255) + 0.114 * (c & 255)) > 118; }
+
+    private int[] greyColors() {
         int[] v = greyValues(s.greyTones), c = new int[v.length];
         for (int i = 0; i < v.length; i++) c[i] = 0xff000000 | v[i] << 16 | v[i] << 8 | v[i];
-        return bands("tones", pw, ph, c);
+        return c;
     }
 
-    /** The colour family, one band per step of the Colors slider (up to all 8). */
+    /** The Color palette for the preview photo, darkest to lightest (null until a photo is loaded). */
+    private int[] paletteByLight() {
+        int[] pal = currentPalette();
+        if (pal == null) return null;
+        Integer[] o = new Integer[pal.length];
+        for (int i = 0; i < o.length; i++) o[i] = pal[i];
+        Arrays.sort(o, Comparator.comparingDouble(c -> 0.299 * ((c >> 16) & 255) + 0.587 * ((c >> 8) & 255) + 0.114 * (c & 255)));
+        int[] out = new int[o.length];
+        for (int i = 0; i < out.length; i++) out[i] = o[i];
+        return out;
+    }
+
+    private int[] currentPalette() {
+        Picture p = picture;
+        if (p == null) return null;
+        String key = pictureKey + "|" + s.colors + "|" + s.cells;
+        int[] pal = palettes.get(key);
+        if (pal == null) { pal = Engine.palette(p, s); palettes.clear(); palettes.put(key, pal); }
+        return pal;
+    }
+
+    private final Map<String, int[]> palettes = new HashMap<>();
+    static final int MARK_OFF = 0xff333333;
+
+    /**
+     * The XOXO logo as a scale: two rows of four marks (X O X O / O X O X), one per step. Marks
+     * for what's included light up in that tone or colour; the rest stay dark.
+     */
+    private Object marksPatch(String key, int pw, int ph, int[] lit) {
+        return cached("marks|" + key + "|" + pw + "x" + ph + "|" + Arrays.toString(lit), () -> {
+            int[] out = new int[pw * ph];
+            Arrays.fill(out, CHOSEN);
+            int d = ph / 2, x0 = (pw - 4 * d) / 2;
+            boolean[] xs = Engine.stamp(Style.STITCH, d), os = Engine.stamp(Style.BEADS, d);
+            for (int i = 0; i < 8; i++) {
+                int r = i / 4, c = i % 4;
+                boolean isX = (r + c) % 2 == 0;
+                int color = i < lit.length ? lit[i] : MARK_OFF;
+                boolean[] m = isX ? xs : os;
+                for (int yy = 0; yy < d; yy++) for (int xx = 0; xx < d; xx++)
+                    if (m[yy * d + xx]) { int px = x0 + c * d + xx, py = r * d + yy; if (px >= 0 && px < pw) out[py * pw + px] = color; }
+            }
+            return new Engine.Image(pw, ph, out);
+        });
+    }
+
+    private static int[] pad8(int[] lit) {
+        int[] out = new int[8];
+        for (int i = 0; i < 8; i++) out[i] = i < lit.length ? lit[i] : MARK_OFF;
+        return out;
+    }
+
+    private int[] colorMarks() {
+        int[] pal = paletteByLight();
+        int steps = (s.colors - 4) / 4 + 1;
+        int[] lit = new int[steps];
+        for (int i = 0; i < steps; i++) lit[i] = pal == null ? GREY : pal[(int) Math.round(i * (pal.length - 1) / (double) Math.max(1, steps - 1))];
+        return pad8(lit);
+    }
+
+    /** The XOXO logo as 8 marks (X O X O / O X O X) in the patch's space, no box behind them. */
+    private int[][] drawMarks(Surface g, int px, int py, int pw, int ph, int[] colors, int behind) {
+        // spread out: marks half the patch's height, spaced across its whole width
+        int d = ph / 2, rowPitch = d, colPitch = (pw - d) / 3, x0 = px, y0 = py;
+        boolean[] xs = Engine.stamp(Style.STITCH, d), os = Engine.stamp(Style.BEADS, d);
+        g.clip(px, py, pw, ph);
+        for (int i = 0; i < 8; i++) {
+            int r = i / 4, c = i % 4;
+            runs(g, (r + c) % 2 == 0 ? xs : os, x0 + c * colPitch, y0 + r * rowPitch, d, legible(colors[i], behind));
+        }
+        g.unclip();
+        // tap areas: the patch split into a 4 x 2 grid, one cell per mark
+        int[][] spots = new int[8][];
+        for (int i = 0; i < 8; i++) {
+            int r = i / 4, c = i % 4, cx0 = px + c * pw / 4, cy0 = py + r * ph / 2;
+            spots[i] = new int[]{cx0, cy0, px + (c + 1) * pw / 4 - cx0, py + (r + 1) * ph / 2 - cy0};
+        }
+        return spots;
+    }
+
+    private static double luma(int c) { return 0.299 * (c >> 16 & 255) + 0.587 * (c >> 8 & 255) + 0.114 * (c & 255); }
+
+    /**
+     * A mark's colour, moved just far enough from what's behind it that it never disappears into it
+     * (a black tone on the black menu, a white one on the white highlight). Lit colours are squeezed
+     * into the range that stands clear of the background, keeping their order and hue; unused marks
+     * become a faint ghost that's still clearly dimmer than any lit one.
+     */
+    private static int legible(int c, int behind) {
+        final double gap = 60;
+        double b = luma(behind);
+        boolean darkBg = b < 128;
+        if (c == MARK_OFF) { int v = (int) Math.round(darkBg ? b + 30 : b - 40); return 0xff000000 | v << 16 | v << 8 | v; }
+        double l = luma(c);
+        int r = c >> 16 & 255, g = c >> 8 & 255, bl = c & 255;
+        boolean below = b - gap >= 0, above = b + gap <= 255;   // which sides of the background have room
+        double target;
+        if (r == g && g == bl) {   // greys: squeeze out of the band around the background, keeping every tone apart and in order
+            if (below && above) target = l < b ? l * (b - gap) / b : b + gap + (l - b) * (255 - b - gap) / (255 - b);
+            else if (above) target = b + gap + l * (255 - b - gap) / 255;
+            else target = l * (b - gap) / 255;
+        } else {                   // colours: only nudged if too close, toward the side with room
+            target = l;
+            if (Math.abs(l - b) < gap) target = (l >= b && above) || !below ? b + gap : b - gap;
+        }
+        target = Math.max(0, Math.min(255, target));
+        if (target > l) {          // lighten toward white
+            double t = (target - l) / Math.max(1, 255 - l);
+            r += (int) Math.round((255 - r) * t); g += (int) Math.round((255 - g) * t); bl += (int) Math.round((255 - bl) * t);
+        } else if (target < l) {   // darken toward black
+            double t = (l - target) / Math.max(1, l);
+            r -= (int) Math.round(r * t); g -= (int) Math.round(g * t); bl -= (int) Math.round(bl * t);
+        }
+        return 0xff000000 | r << 16 | g << 8 | bl;
+    }
+
+    /** Greyscale: one mark per tone in use, black to white. */
+    private Object tonesPatch(int pw, int ph) { return marksPatch("tones", pw, ph, greyColors()); }
+
+    /** Color: one mark per step of the Colors slider, each showing a colour from the photo's palette. */
     private Object colorPatch(int pw, int ph) {
-        int n = clamp((s.colors - 4) / 4 + 1, 1, 8);
-        return bands("colors", pw, ph, Arrays.copyOf(Settings.SWATCHES, n));
+        int[] pal = paletteByLight();
+        int steps = (s.colors - 4) / 4 + 1;
+        int[] lit = new int[steps];
+        for (int i = 0; i < steps; i++) lit[i] = pal == null ? GREY : pal[(int) Math.round(i * (pal.length - 1) / (double) Math.max(1, steps - 1))];
+        return marksPatch("colors", pw, ph, lit);
     }
 
-    /** Grey with the accent: what a picture will look like. */
-    private Object accentPatch(int pw, int ph) {
-        int a = Settings.SWATCHES[s.swatch];
-        return bands("accent", pw, ph, new int[]{0xff606060, a, 0xffb0b0b0});
-    }
+    /** The accent colour itself. */
+    private Object accentPatch(int pw, int ph) { return bands("accent", pw, ph, new int[]{Settings.SWATCHES[s.swatch]}); }
 
     // ---- preview
 
@@ -843,11 +1151,9 @@ public final class Ui {
             int ix = x + (bw - previewImgW) / 2, iy = y + (bh - previewImgH) / 2;
             g.image(previewImg, ix, iy);
             if (beforeImg != null) {   // the original, small, in the top-right corner
-                int bx = ix + previewImgW - beforeW - 6 * k, by = iy + 6 * k;
-                if (previewImgW < beforeW * 2) { bx = x + bw - beforeW; by = y; }
-                outline(g, bx - 2 * k, by - 2 * k, beforeW + 4 * k, beforeH + 4 * k, 2 * k, BLACK);
+                int bx = ix + 6 * k, by = iy + 6 * k;
+                if (previewImgW < beforeW * 2) { bx = x; by = y; }
                 g.image(beforeImg, bx, by);
-                outline(g, bx - k, by - k, beforeW + 2 * k, beforeH + 2 * k, k, GREY);
             }
         }
         // page line: < Style  2 / 3 >
@@ -877,7 +1183,7 @@ public final class Ui {
         for (int i = 0; i < popup.length; i++) {
             int ry = popupY + i * rowH;
             boolean on = i == popupSel;
-            if (on) g.fill(popupX, ry, popupW, rowH, WHITE);
+            if (on) g.fill(popupX, ry, popupW, rowH, HILITE);
             g.text(popup[i], popupX + 10 * k, ry + (rowH - t) / 2, t, on ? BLACK : WHITE);
         }
     }
@@ -889,9 +1195,9 @@ public final class Ui {
         g.text(running ? (cancel.get() ? "Cancelling..." : "Converting") : (cancel.get() ? "Cancelled" : "Done"), x, cy, t * 2, WHITE);
         cy += 2 * t + 20 * k;
         int barH = t;
-        outline(g, x, cy, bw, barH, 2 * k, WHITE);
-        int fillW = total == 0 ? 0 : (int) ((bw - 8 * k) * (long) done / total);
-        g.fill(x + 4 * k, cy + 4 * k, fillW, barH - 8 * k, WHITE);
+        g.fill(x, cy, bw, barH, CHOSEN);   // grey track, white fill (no border)
+        int fillW = total == 0 ? 0 : (int) (bw * (long) done / total);
+        g.fill(x, cy, fillW, barH, WHITE);
         cy += barH + 14 * k;
         g.text(done + " / " + total, x, cy, t, GREY);
         if (running && done > 0) {
@@ -1015,12 +1321,13 @@ public final class Ui {
         b.append("color=").append(s.color).append('\n').append("tones=").append(s.greyTones).append('\n')
          .append("colors=").append(s.colors).append('\n').append("accentOn=").append(s.accent).append('\n')
          .append("swatch8=").append(s.swatch).append('\n')
+         .append("accentAmount=").append(s.accentRange).append('\n')
          .append("cells=").append(s.cells).append('\n').append("cell=").append(s.cellSize).append('\n')
          .append("replace=").append(replace).append('\n').append("zoom=").append(zoom).append('\n');
         StringBuilder st = new StringBuilder();
         for (Style x : Style.values()) if (styleOn[x.ordinal()]) st.append(x.name()).append(',');
         b.append("styles=").append(st).append('\n');
-        for (Map.Entry<String, String> e : savedKnobs.entrySet()) b.append("knobs2.").append(e.getKey()).append('=').append(e.getValue()).append('\n');
+        for (Map.Entry<String, String> e : savedKnobs.entrySet()) b.append("knobs3.").append(e.getKey()).append('=').append(e.getValue()).append('\n');
         if (input != null) b.append("input=").append(inputFolder ? "d" : "f").append(host.savePlace(input)).append('\n').append("inputName=").append(inputName).append('\n');
         if (output != null) b.append("output=").append(host.savePlace(output)).append('\n').append("outputName=").append(outputName).append('\n');
         try { host.savePrefs(b.toString()); } catch (Exception ignored) { }
@@ -1038,6 +1345,7 @@ public final class Ui {
             s.colors = clamp(Integer.parseInt(m.getOrDefault("colors", "12")) / 4 * 4, 4, 32);
             s.accent = Boolean.parseBoolean(m.getOrDefault("accentOn", "false"));
             s.swatch = clamp(Integer.parseInt(m.getOrDefault("swatch8", "0")), 0, Settings.SWATCHES.length - 1);
+            s.accentRange = clamp(Integer.parseInt(m.getOrDefault("accentAmount", "" + Settings.ACCENT_DEFAULT)), 0, Settings.RANGE_DEGREES.length - 1);
             s.cells = clamp(Integer.parseInt(m.getOrDefault("cells", "96")), 16, 256);
             s.cellSize = clamp(Integer.parseInt(m.getOrDefault("cell", "15")), 2, 40);
             replace = Boolean.parseBoolean(m.getOrDefault("replace", "false"));
@@ -1048,7 +1356,7 @@ public final class Ui {
                 for (String n : st.split(",")) if (!n.isEmpty()) try { styleOn[Style.valueOf(n).ordinal()] = true; } catch (IllegalArgumentException ignored) { }
             }
             for (Style x : Style.values()) {
-                String v = m.get("knobs2." + x.name());
+                String v = m.get("knobs3." + x.name());
                 if (v == null) continue;
                 savedKnobs.put(x.name(), v);
                 String[] parts = v.split(",");

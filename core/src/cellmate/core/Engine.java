@@ -110,7 +110,7 @@ public final class Engine {
             float[] hsv = hsv(0xff000000 | (rgb[0][i] << 16) | (rgb[1][i] << 8) | rgb[2][i]);
             float d = Math.abs(hsv[0] - hue);
             d = Math.min(d, 360 - d);
-            hit[i] = d <= range && hsv[1] >= 0.28f && hsv[2] >= 0.18f;
+            hit[i] = d <= range && hsv[1] >= Settings.ACCENT_MIN_SAT[s.accentRange] && hsv[2] >= Settings.ACCENT_MIN_VAL[s.accentRange];
         }
         for (int y = 0; y < rows; y++) {
             for (int x = 0; x < cols; x++) {
@@ -152,6 +152,15 @@ public final class Engine {
             color[i] = 0xff000000 | (Math.round(c[0]) << 16) | (Math.round(c[1]) << 8) | Math.round(c[2]);
         }
         return new Grid(cols, rows, color);
+    }
+
+    /** The colours Color mode will use for this picture (most common first). */
+    public static int[] palette(Picture p, Settings s) {
+        Settings c = s.copy(); c.color = true;
+        Grid g = grid(p, c);
+        java.util.Map<Integer, Integer> count = new java.util.HashMap<>();
+        for (int v : g.color) count.merge(v, 1, Integer::sum);
+        return count.entrySet().stream().sorted((a, b) -> b.getValue() - a.getValue()).mapToInt(java.util.Map.Entry::getKey).toArray();
     }
 
     /** Average colour of each cell's area of the picture, as R, G, B planes. */
@@ -322,15 +331,22 @@ public final class Engine {
             return new Image(w, h, out);
         }
         java.util.Arrays.fill(out, 0xff000000);
-        for (int r = 0; r < g.rows; r++) for (int k = 0; k < g.cols; k++) {
-            int col = g.color[r * g.cols + k];
-            double lum = (0.299 * ((col >> 16) & 255) + 0.587 * ((col >> 8) & 255) + 0.114 * (col & 255)) / 255.0;
-            int side = Math.max(1, (int) Math.round(c * (dark + (light - dark) * lum)));
+        int n = g.rows * g.cols;
+        double[] lum = new double[n];
+        Integer[] order = new Integer[n];
+        for (int i = 0; i < n; i++) {
+            int col = g.color[i];
+            lum[i] = (0.299 * ((col >> 16) & 255) + 0.587 * ((col >> 8) & 255) + 0.114 * (col & 255)) / 255.0;
+            order[i] = i;
+        }
+        java.util.Arrays.sort(order, (a, b) -> Double.compare(lum[a], lum[b]));   // darker first, lighter on top
+        for (int i : order) {
+            int r = i / g.cols, k = i % g.cols, col = g.color[i];
+            int side = Math.max(1, (int) Math.round(c * (dark + (light - dark) * lum[i])));
             int off = (c - side) / 2;
-            for (int y = 0; y < side; y++) {
-                int base = (r * c + off + y) * w + k * c + off;
-                java.util.Arrays.fill(out, base, base + side, col);
-            }
+            int x0 = Math.max(0, k * c + off), x1 = Math.min(w, k * c + off + side);
+            for (int y = Math.max(0, r * c + off); y < Math.min(h, r * c + off + side); y++)
+                if (x1 > x0) java.util.Arrays.fill(out, y * w + x0, y * w + x1, col);
         }
         return new Image(w, h, out);
     }
@@ -377,9 +393,9 @@ public final class Engine {
         Settings.Style st = Settings.Style.MELTED;
         double outerF = s.value(st, 0), holeF = Math.min(s.value(st, 1), outerF - 0.12);
         double turn = Math.toRadians(s.value(st, 2));
-        int level = (int) s.value(st, 3);
-        double share = 0.35 + 0.08 * (level - 1), strength = 1 + 0.3 * (level - 1);
-        int rows = g.rows, cols = g.cols, pad = 2 + (level - 1), n = c + 2 * pad;
+        double strength = s.value(st, 3);                     // 1 = the original amount of melting
+        double share = 0.35 + 0.25 * (strength - 1);
+        int rows = g.rows, cols = g.cols, pad = 2 + (int) Math.ceil(Math.max(0, strength - 1) * 3) + (int) Math.ceil(Math.max(0, outerF - 0.5) * c), n = c + 2 * pad;
         int W = cols * c + 2 * pad, H = rows * c + 2 * pad;
         int[] out = new int[W * H];
         java.util.Arrays.fill(out, 0xff000000);
