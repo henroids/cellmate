@@ -19,10 +19,6 @@ public final class Ui {
     public enum Pick { INPUT_FOLDER, INPUT_IMAGE, OUTPUT }
     public enum Key { UP, DOWN, LEFT, RIGHT, A, B }
 
-    /** Toggle values, drawn as the logo's motif: a white O for on, a red X for off. */
-    static final String ON = "\u0001on", OFF = "\u0001off";
-    static final int MOTIF_WHITE = 0xffb3b3b3, MOTIF_RED = 0xff9e2023;
-
     static final int BLACK = 0xff000000, WHITE = 0xfffafafa, GREY = 0xff9a9a9a, DIM = 0xff4a4a4a, ICON = 0xff7a7a7a;
 
     private final Host host;
@@ -98,7 +94,7 @@ public final class Ui {
             }, null));
         r.add(new Row("Zoom", "Preview zoom", () -> zoom ? "1:1" : "Fit", d -> { zoom = !zoom; changed(); }, null));
         for (Style st : Style.values())
-            r.add(new Row("style:" + st.name(), st.label, () -> styleOn[st.ordinal()] ? ON : OFF,
+            r.add(new Row("style:" + st.name(), st.label, () -> styleOn[st.ordinal()] ? "On" : "Off",
                     d -> { styleOn[st.ordinal()] = !styleOn[st.ordinal()]; previewStyle = st; changed(); }, null));
         r.add(new Row("Mode", "Mode", () -> s.color ? "Color" : "Greyscale", d -> { s.color = !s.color; changed(); }, null));
         if (s.color)
@@ -418,15 +414,6 @@ public final class Ui {
             g.text(row.label, menuX + 10 * k, ty, t, on ? BLACK : WHITE);
             String v = row.value.get();
             int right = menuX + menuW - 14 * k;
-            if (v.equals(ON) || v.equals(OFF)) {
-                boolean isOn = v.equals(ON);
-                int d = t - 4 * k;   // icon size, about the height of a capital letter row
-                int ix = right - d, iy = y + (rowH - d) / 2;
-                // On the white selection bar the white O turns black, like the text does.
-                motif(g, ix, iy, d, isOn, isOn ? (on ? BLACK : MOTIF_WHITE) : MOTIF_RED);
-                if (on) { leftArrowX = ix; valueMidX = ix + d / 2; }
-                continue;
-            }
             int labelEnd = menuX + 10 * k + g.textWidth(row.label, t) + 16 * k;
             boolean arrows = on && row.change != null;
             int arrowW = arrows ? 6 * k : 0, gap = arrows ? 6 * k : 0;
@@ -434,6 +421,14 @@ public final class Ui {
             int vw = g.textWidth(v, t);
             int vx = right - vw - (arrowW + gap);
             g.text(v, vx, ty, t, on ? BLACK : GREY);
+            if (row.key.startsWith("style:")) {
+                // Sample patch: a few pixels drawn exactly as this style will draw them.
+                int ph = rowH - 6 * k, pw = ph * 5 / 2;
+                int px = right - g.textWidth("Off", t) - 24 * k - 12 * k - pw;   // fixed spot, arrows or not
+                Object patch = patch(Style.valueOf(row.key.substring(6)), pw, ph);
+                g.fill(px - k, y + 2 * k, pw + 2 * k, ph + 2 * k, on ? BLACK : DIM);
+                g.image(patch, px, y + 3 * k);
+            }
             if (on) { leftArrowX = vx - gap - arrowW; valueMidX = vx + vw / 2; }
             if (arrows) {
                 int cy = y + rowH / 2;
@@ -518,18 +513,42 @@ public final class Ui {
 
     // ------------------------------------------------------------------ pixel shapes
 
-    /** The logo's O (a bead) or X (a cross stitch), d pixels square, drawn pixel-exact. */
-    private void motif(Surface g, int x, int y, int d, boolean o, int color) {
-        boolean[] m = Engine.stamp(o ? Style.BEADS : Style.STITCH, d);
-        for (int yy = 0; yy < d; yy++) {
-            int xx = 0;
-            while (xx < d) {
-                if (!m[yy * d + xx]) { xx++; continue; }
-                int start = xx;
-                while (xx < d && m[yy * d + xx]) xx++;
-                g.fill(x + start, y + yy, xx - start, 1, color);
-            }
+    private final Map<String, Object> patches = new HashMap<>();
+
+    /**
+     * A pw x ph sample of a style at the real pixel size (smaller only if two pixels wouldn't
+     * fit in the row), in the current mode's tones.
+     */
+    private Object patch(Style st, int pw, int ph) {
+        int cell = Math.max(2, Math.min(s.cellSize, ph / 2));
+        int[] values = s.color ? new int[]{0xfffafafa, 0xffd8333a, 0xff3570d8, 0xfff2c230}
+                : greyPatchTones();
+        String key = st + "|" + pw + "x" + ph + "|" + cell + "|" + Arrays.toString(values);
+        Object img = patches.get(key);
+        if (img != null) return img;
+        int cols = (pw + cell - 1) / cell + 1, rows = (ph + cell - 1) / cell + 1;
+        int[] c = new int[cols * rows];
+        for (int y = 0; y < rows; y++) for (int x = 0; x < cols; x++) c[y * cols + x] = values[(x + y) % values.length];
+        Engine.Image im = Engine.draw(new Grid(cols, rows, c), st, cell);
+        int[] crop = new int[pw * ph];
+        for (int y = 0; y < ph; y++) System.arraycopy(im.argb, y * im.width, crop, y * pw, pw);
+        img = host.makeImage(crop, pw, ph);
+        patches.put(key, img);
+        return img;
+    }
+
+    /** Light tones of the current greyscale setting (black would just show nothing). */
+    private int[] greyPatchTones() {
+        int n = Math.max(2, Math.min(8, s.greyTones));
+        double gamma = Math.log(255.0 / 96.0) / Math.log(2.0);
+        List<Integer> v = new ArrayList<>();
+        for (int i = n - 1; i >= 1; i--) {
+            int g = n == 3 && i == 1 ? 96 : (int) Math.round(255 * Math.pow((double) i / (n - 1), gamma));
+            v.add(0xff000000 | g << 16 | g << 8 | g);
         }
+        int[] out = new int[v.size()];
+        for (int i = 0; i < out.length; i++) out[i] = v.get(i);
+        return out;
     }
 
     private void triangle(Surface g, int x, int cy, int w, boolean left, int color) {
