@@ -235,15 +235,6 @@ public final class Ui {
             int[] bands() { return greyColors(); }
             int[] marks() { return pad8(greyColors()); }
         });
-        r.add(new Row("Color", "Color") {
-            final List<Part> p = Collections.singletonList(part("Colors", 8, () -> (s.colors - 4) / 4, v -> s.colors = 4 + 4 * v, v -> (4 + 4 * v) + " colors"));
-            boolean box() { return true; }
-            boolean chosen() { return s.color; }
-            void choose() { if (!s.color) { s.color = true; changed(); } }
-            List<Part> parts() { return p; }
-            int[] bands() { return paletteByLight(); }
-            int[] marks() { return colorMarks(); }
-        });
         r.add(new Row("Accent", "Accent") {
             // the bar is the amount; the colour is picked on the marks (or with L/R after switching section)
             final List<Part> p = Arrays.asList(
@@ -259,6 +250,15 @@ public final class Ui {
             List<Part> parts() { return p; }
             int[] marks() { return Settings.SWATCHES; }
             boolean picks() { return true; }
+        });
+        r.add(new Row("Color", "Color") {
+            final List<Part> p = Collections.singletonList(part("Colors", 8, () -> (s.colors - 4) / 4, v -> s.colors = 4 + 4 * v, v -> (4 + 4 * v) + " colors"));
+            boolean box() { return true; }
+            boolean chosen() { return s.color; }
+            void choose() { if (!s.color) { s.color = true; changed(); } }
+            List<Part> parts() { return p; }
+            int[] bands() { return paletteByLight(); }
+            int[] marks() { return colorMarks(); }
         });
         if (items != null && items.size() > 1)
             r.add(new ValueRow("Preview image", "Preview image", () -> (previewIndex + 1) + " / " + items.size(), d -> {
