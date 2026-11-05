@@ -98,9 +98,15 @@ public final class Main implements Host {
 
     // ------------------------------------------------------------------ Host
 
-    @Override public boolean canPickEither() { return true; }
+    /** Windows: the system's own file windows. Elsewhere (or if they can't load): Swing's chooser. */
+    private final boolean nativePicker = NativePicker.available();
+    private File lastDir;
+
+    // The native windows choose a file or a folder, not either, so the menu asks which first.
+    @Override public boolean canPickEither() { return !nativePicker; }
 
     @Override public void pick(Ui.Pick kind) {
+        if (nativePicker) { pickNative(kind); return; }
         JFileChooser fc = new JFileChooser();
         if (kind == Ui.Pick.INPUT) {
             fc.setFileSelectionMode(JFileChooser.FILES_AND_DIRECTORIES);
@@ -121,6 +127,30 @@ public final class Main implements Host {
             ui.picked(k, f, f.getName().isEmpty() ? f.getPath() : f.getName());
         }
         panel.requestFocusInWindow();
+    }
+
+    /** Opens the system window on its own thread, so this one keeps drawing while it's up. */
+    private void pickNative(Ui.Pick kind) {
+        File start = lastDir;
+        Thread t = new Thread(() -> {
+            File f;
+            try {
+                f = kind == Ui.Pick.INPUT_IMAGE ? NativePicker.openImage(Plan.EXTENSIONS, start) : NativePicker.pickFolder(start);
+            } catch (Throwable e) {
+                f = null;
+            }
+            final File chosen = f;
+            SwingUtilities.invokeLater(() -> {
+                if (chosen != null) {
+                    lastDir = chosen.getParentFile();
+                    ui.picked(kind, chosen, chosen.getName().isEmpty() ? chosen.getPath() : chosen.getName());
+                }
+                frame.toFront();
+                panel.requestFocusInWindow();
+            });
+        }, "file window");
+        t.setDaemon(true);
+        t.start();
     }
 
     @Override public List<String> listImages(Object input, boolean folder) throws IOException {

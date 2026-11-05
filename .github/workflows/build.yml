@@ -43,14 +43,19 @@ jobs:
         shell: bash
         run: |
           mkdir -p build/classes build/jar
-          javac --release 17 -d build/classes $(find core/src desktop/src -name '*.java')
+          # the system's own file windows: Native File Dialog Extended, through LWJGL
+          for a in lwjgl/3.3.4/lwjgl-3.3.4 lwjgl/3.3.4/lwjgl-3.3.4-natives-windows \
+                   lwjgl-nfd/3.3.4/lwjgl-nfd-3.3.4 lwjgl-nfd/3.3.4/lwjgl-nfd-3.3.4-natives-windows; do
+            curl -fsSL -o "build/jar/$(basename $a).jar" "https://repo1.maven.org/maven2/org/lwjgl/$a.jar"
+          done
+          javac --release 17 -cp "build/jar/*" -d build/classes $(find core/src desktop/src -name '*.java')
           cp desktop/resources/* build/classes/
           jar --create --file build/jar/cellmate.jar --main-class cellmate.desktop.Main -C build/classes .
       - name: Package
         shell: bash
         run: |
           jpackage --type app-image --name Cellmate --input build/jar --main-jar cellmate.jar \
-            --main-class cellmate.desktop.Main --icon desktop/cellmate.ico --add-modules java.desktop \
+            --main-class cellmate.desktop.Main --icon desktop/cellmate.ico --add-modules java.desktop,jdk.unsupported \
             --java-options "-Dsun.java2d.uiScale=1" --app-version 1.0.${{ github.run_number }} \
             --vendor henroids --dest build/app
       - name: Zip
