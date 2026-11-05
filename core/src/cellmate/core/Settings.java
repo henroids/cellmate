@@ -50,10 +50,13 @@ public final class Settings {
     public static final int[] SWATCHES = {0xffe93e8f, 0xffff6a1c, 0xfff6d55c, 0xff44d468, 0xff3caea3, 0xff2278ff, 0xff773ca6, 0xffa77d50};
     public static final String[] SWATCH_NAMES = {"Pink", "Orange", "Yellow", "Green", "Teal", "Blue", "Purple", "Brown"};
     /**
-     * Accent amount: the share of the picture, its lightest parts, that takes the accent colour.
-     * The same parts for every colour, whatever colour they were in the photo.
+     * Accent amount, 5 steps: more takes bigger and fainter highlights, and more of them. Per
+     * step: the largest spot (as a share of the picture's short side), how much brighter than its
+     * surroundings a spot must be (0-255), and the most of the picture that can take the colour.
      */
-    public static final double[] ACCENT_SHARE = {0.03, 0.06, 0.10, 0.15, 0.22};
+    public static final double[] ACCENT_SPOT = {1 / 48.0, 1 / 32.0, 1 / 24.0, 1 / 16.0, 1 / 12.0};
+    public static final int[] ACCENT_LIFT = {44, 34, 24, 18, 12};
+    public static final double[] ACCENT_SHARE = {0.01, 0.02, 0.035, 0.055, 0.08};
     public static final int ACCENT_DEFAULT = 2;
 
     /** Detail (pixels across the short side) and Pixel size (output pixels per cell); the defaults are in the middle. */

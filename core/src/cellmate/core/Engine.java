@@ -101,35 +101,49 @@ public final class Engine {
     }
 
     /**
-     * Accent: a pop of colour on the highlights. The lightest cells of the photo, the share the
-     * amount asks for, take the accent colour whatever colour they were; every accent colour lands
-     * on the same cells. Lone specks are left alone.
+     * Accent: a pop of colour on the highlights: small spots that shine brighter than what's
+     * around them (a glint on a face, a light, a reflection), not whatever is lightest overall. A
+     * white shirt is a big bright shape, so it (and its edges) stays as it is. This is a white
+     * top-hat: the lightness minus its "opening", which wipes out bright spots smaller than a few
+     * cells and keeps big shapes. Weighted toward the brightest spots, the top share the amount
+     * asks for takes the accent colour, the same cells for every colour.
      */
     private static void applyAccent(Picture p, Settings s, int cols, int rows, int[] color) {
         int[][] rgb = boxRgb(p, cols, rows);
         int n = color.length;
-        int[] light = new int[n], count = new int[256];
-        for (int i = 0; i < n; i++) count[light[i] = (rgb[0][i] * 299 + rgb[1][i] * 587 + rgb[2][i] * 114) / 1000]++;
-        // the lightness above which the wanted share of cells lies
-        int want = (int) Math.round(n * Settings.ACCENT_SHARE[s.accentRange]), above = 0, cut = 256;
-        while (cut > 0 && above + count[cut - 1] <= want) above += count[--cut];
-        if (above == 0 && cut > 0) cut--;   // always at least the very lightest cells
-        boolean[] hit = new boolean[n];
-        for (int i = 0; i < n; i++) hit[i] = light[i] >= cut;
-        int ink = Settings.SWATCHES[s.swatch];
-        for (int y = 0; y < rows; y++) {
-            for (int x = 0; x < cols; x++) {
-                int i = y * cols + x;
-                if (!hit[i]) continue;
-                boolean company = false;
-                for (int dy = -1; dy <= 1 && !company; dy++)
-                    for (int dx = -1; dx <= 1 && !company; dx++) {
-                        int yy = y + dy, xx = x + dx;
-                        if ((dx != 0 || dy != 0) && yy >= 0 && yy < rows && xx >= 0 && xx < cols && hit[yy * cols + xx]) company = true;
-                    }
-                if (company) color[i] = ink;
-            }
+        int[] light = new int[n];
+        for (int i = 0; i < n; i++) light[i] = (rgb[0][i] * 299 + rgb[1][i] * 587 + rgb[2][i] * 114) / 1000;
+        int r = Math.max(1, (int) Math.round(Math.min(cols, rows) * Settings.ACCENT_SPOT[s.accentRange]));   // biggest spot: 2r+1 cells
+        int[] opened = extreme(extreme(light, cols, rows, r, false), cols, rows, r, true);
+        double[] score = new double[n];
+        for (int i = 0; i < n; i++) {
+            int lift = light[i] - opened[i];
+            score[i] = lift < Settings.ACCENT_LIFT[s.accentRange] ? 0 : lift * (double) light[i] / 255;   // must stand out, and be bright
         }
+        int want = Math.max(1, (int) Math.round(n * Settings.ACCENT_SHARE[s.accentRange]));
+        double[] sorted = score.clone();
+        java.util.Arrays.sort(sorted);
+        double cut = Math.max(1e-9, sorted[Math.max(0, n - want)]);
+        int ink = Settings.SWATCHES[s.swatch];
+        for (int i = 0; i < n; i++) if (score[i] >= cut) color[i] = ink;
+    }
+
+    /** The max (or min) of v over the (2r+1)-square around each cell, clipped at the edges. */
+    private static int[] extreme(int[] v, int cols, int rows, int r, boolean max) {
+        int[] across = new int[v.length], out = new int[v.length];
+        for (int y = 0; y < rows; y++)
+            for (int x = 0; x < cols; x++) {
+                int m = v[y * cols + x];
+                for (int xx = Math.max(0, x - r); xx <= Math.min(cols - 1, x + r); xx++) m = max ? Math.max(m, v[y * cols + xx]) : Math.min(m, v[y * cols + xx]);
+                across[y * cols + x] = m;
+            }
+        for (int y = 0; y < rows; y++)
+            for (int x = 0; x < cols; x++) {
+                int m = across[y * cols + x];
+                for (int yy = Math.max(0, y - r); yy <= Math.min(rows - 1, y + r); yy++) m = max ? Math.max(m, across[yy * cols + x]) : Math.min(m, across[yy * cols + x]);
+                out[y * cols + x] = m;
+            }
+        return out;
     }
 
     private static Grid colorGrid(Picture p, Settings s, int cols, int rows) {
