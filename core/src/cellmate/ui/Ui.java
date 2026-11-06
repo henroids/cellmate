@@ -437,6 +437,11 @@ public final class Ui {
     }
 
     public void pointerUp(int x, int y) {
+        tapUp(x, y);
+        host.repaint();   // whatever the tap did (a window opening, a choice), show it now
+    }
+
+    private void tapUp(int x, int y) {
         if (screen == Screen.RUNNING) { cancel.set(true); message = "Cancelling..."; host.repaint(); return; }
         if (screen == Screen.DONE) { screen = Screen.MENU; host.repaint(); return; }
         if (popup != null) { tapPopup(x, y); host.repaint(); return; }
