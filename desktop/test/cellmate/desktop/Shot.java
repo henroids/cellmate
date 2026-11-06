@@ -46,6 +46,17 @@ public class Shot {
         int shot = 0;
         for (int i = 5; i < a.length; i++) {
             String cmd = a[i];
+            if (cmd.equals("shot2")) {   // the second screen's preview, 1280 x 720
+                BufferedImage img = new BufferedImage(1280, 720, BufferedImage.TYPE_INT_RGB);
+                uiThread.submit(() -> { ui[0].drawPreviewScreen(new Java2dSurface(img.createGraphics(), font), 1280, 720); }).get();
+                ImageIO.write(img, "png", new File(a[0], "shot" + (shot++) + ".png"));
+                continue;
+            }
+            if (cmd.startsWith("ptap")) {   // ptapX,Y on the second screen
+                String[] v = cmd.substring(4).split(",");
+                uiThread.submit(() -> ui[0].tapPreviewScreen(Integer.parseInt(v[0]), Integer.parseInt(v[1]))).get();
+                continue;
+            }
             if (cmd.equals("shot")) {
                 Thread.sleep(200);
                 waitIdle(uiThread);

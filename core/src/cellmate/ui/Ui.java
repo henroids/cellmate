@@ -29,6 +29,7 @@ public final class Ui {
 
     /** Background of a chosen row (and the empty part of its progress bar). */
     static final int CHOSEN = 0xff222222;
+    static final int CLEAR_RED = 0xffe53935;   // the X on the Clear button
     /** The one light grey: the selection bar, text, fills and the patches' light squares (no pure white anywhere). */
     static final int HILITE = 0xffbcbcbc;
     /** The scroll bar's handle: the light grey, 30% darker. */
@@ -90,7 +91,8 @@ public final class Ui {
 
     // ---- layout of the last frame, for touch and mouse
     private int k = 1, t = 20, rowH, menuX, menuY, menuW, menuH, previewX, previewY, previewW, previewH;
-    private final List<Hit> hits = new ArrayList<>();
+    private List<Hit> hits = new ArrayList<>();               // what's tappable on the main screen (or, while drawing it, the preview screen)
+    private List<Hit> previewHits = new ArrayList<>();        // what's tappable on the second screen's preview
 
     public Ui(Host host) {
         this.host = host;
@@ -525,8 +527,19 @@ public final class Ui {
     }
 
     /** A tap on the second screen's preview: the arrows page through the styles. */
+    /** A tap on the second screen's preview: the page arrows, Clear, or the canvas (add or change the pictures). */
     public void tapPreviewScreen(int x, int y) {
-        for (Hit h : hits) if (h.contains(x, y) && (h.what == PAGE_LEFT || h.what == PAGE_RIGHT)) { turnPage(h.what == PAGE_LEFT ? -1 : 1); return; }
+        if (screen != Screen.MENU || popup != null) return;
+        List<Hit> list = previewHits;
+        for (int i = list.size() - 1; i >= 0; i--) {
+            Hit h = list.get(i);
+            if (!h.contains(x, y)) continue;
+            if (h.what == PAGE_LEFT || h.what == PAGE_RIGHT) turnPage(h.what == PAGE_LEFT ? -1 : 1);
+            else if (h.what == CLEAR) confirmClear();
+            else if (h.what == CANVAS) pickInput();
+            host.repaint();
+            return;
+        }
     }
 
     // ================================================================== picking
@@ -770,9 +783,11 @@ public final class Ui {
         int saveK = k, saveT = t;
         k = Math.max(1, Math.round(h / 540f)); t = 20 * k;
         g.fill(0, 0, w, h, BLACK);
-        hits.removeIf(x -> x.what == PAGE_LEFT || x.what == PAGE_RIGHT);
-        drawPreview(g, 14 * k, 10 * k, w - 28 * k, h - 20 * k);
-        k = saveK; t = saveT;
+        // its own tap areas, in its own coordinates (not mixed in with the main screen's)
+        List<Hit> main = hits, mine = new ArrayList<>();
+        hits = mine;
+        try { drawPreview(g, 14 * k, 10 * k, w - 28 * k, h - 20 * k); }
+        finally { hits = main; previewHits = mine; k = saveK; t = saveT; }
     }
 
     private void drawMenu(Surface g) {
@@ -1187,7 +1202,7 @@ public final class Ui {
         if (input == null) { centered(g, "Tap or click here to add a photo or a folder", x, y, w, h, GREY); return; }
         if (items == null || items.isEmpty()) {
             centered(g, items == null ? "Looking for images..." : "No images found", x, y, w, h, DIM);
-            drawClear(g, x, y, w);
+            drawClear(g, x + w, y);
             return;
         }
         int bw = w, bh = h - navH;
@@ -1197,6 +1212,7 @@ public final class Ui {
         else {
             int ix = x + (bw - previewImgW) / 2, iy = y + (bh - previewImgH) / 2;
             g.image(previewImg, ix, iy);
+            clearX = ix + previewImgW; clearY = iy;   // Clear sits on the picture's top-right corner
             if (beforeImg != null) {   // the original, small, in the top-right corner
                 int bx = ix + 6 * k, by = iy + 6 * k;
                 if (previewImgW < beforeW * 2) { bx = x; by = y; }
@@ -1215,16 +1231,19 @@ public final class Ui {
         triangle(g, cx + lw / 2 + 16 * k, cyA, aw, false, list.size() > 1 ? WHITE : DIM);
         hits.add(new Hit(x, ly - 4 * k, w / 2, t + 8 * k, "", PAGE_LEFT, 0));
         hits.add(new Hit(x + w / 2, ly - 4 * k, w - w / 2, t + 8 * k, "", PAGE_RIGHT, 0));
-        drawClear(g, x, y, w);
+        if (previewImg != null) drawClear(g, clearX - 6 * k, clearY + 6 * k);
+        else drawClear(g, x + w, y);
     }
 
-    /** The clear button: an X and the word, in the preview's top-right corner. */
-    private void drawClear(Surface g, int x, int y, int w) {
+    private int clearX, clearY;   // the picture's top-right corner, where Clear goes
+
+    /** The clear button: a red X and the word, drawn over the picture with its top-right corner at (right, top). */
+    private void drawClear(Surface g, int right, int top) {
         String word = "Clear";
         int d = t, tw = g.textWidth(word, t), pad = 6 * k;
-        int bw = pad + d + 6 * k + tw + pad, bh = t + 2 * pad, bx = x + w - bw, by = y;
+        int bw = pad + d + 6 * k + tw + pad, bh = t + 2 * pad, bx = right - bw, by = top;
         g.fill(bx, by, bw, bh, CHOSEN);
-        runs(g, Engine.stamp(Style.STITCH, d), bx + pad, by + pad, d, WHITE);
+        runs(g, Engine.stamp(Style.STITCH, d), bx + pad, by + pad, d, CLEAR_RED);
         g.text(word, bx + pad + d + 6 * k, by + pad, t, WHITE);
         hits.add(new Hit(bx, by, bw, bh, "", CLEAR, 0));
     }
