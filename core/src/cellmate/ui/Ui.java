@@ -815,24 +815,30 @@ public final class Ui {
             return;
         }
 
-        // the big green Start button along the bottom
-        int startH = 2 * t + 8 * k, startY = midY + midH - startH;
-        midH -= startH + 12 * k;
-
+        // the green Start button: a big bar along the bottom on tall screens; on wide ones it sits
+        // under the settings, as wide as them
+        int startX, startY, startW, startH;
         if (previewOnOtherScreen) {
-            menuX = w / 8; menuY = midY; menuW = w - w / 4; menuH = midH;
+            startH = rowH + 12 * k; startY = midY + midH - startH;
+            menuX = w / 8; menuY = midY; menuW = w - w / 4; menuH = midH - startH - 12 * k;
+            startX = menuX; startW = menuW;
             previewW = previewH = 0;
         } else if (w >= h) {
-            menuX = 0; menuY = midY; menuW = (int) (w * 0.46); menuH = midH;
+            startH = rowH + 12 * k; startY = midY + midH - startH;
+            menuX = 0; menuY = midY; menuW = (int) (w * 0.46); menuH = midH - startH - 12 * k;
+            startX = menuX; startW = menuW;
             previewX = menuW + 16 * k; previewY = midY; previewW = w - previewX - 14 * k; previewH = midH;
         } else {
+            startH = 2 * t + 8 * k; startY = midY + midH - startH;
+            startX = 14 * k; startW = w - 28 * k;
+            midH -= startH + 12 * k;
             previewX = 14 * k; previewY = midY; previewW = w - 28 * k; previewH = (int) (midH * 0.42);
             menuX = 0; menuY = previewY + previewH + 10 * k; menuW = w; menuH = midH - previewH - 10 * k;
         }
         menuW -= 14 * k;   // room for the scroll bar
         drawMenu(g);
         if (!previewOnOtherScreen) drawPreview(g, previewX, previewY, previewW, previewH);
-        drawStart(g, 14 * k, startY, w - 28 * k, startH);
+        drawStart(g, startX, startY, startW, startH);
 
         List<Row> r = rows();
         Row row = r.get(selectedIndex(r));
@@ -1321,7 +1327,7 @@ public final class Ui {
     private void drawStart(Surface g, int x, int y, int w, int h) {
         g.fill(x, y, w, h, START_GREEN);
         String what = startSummary(), label = "Start";
-        int big = t + t / 2, lw = g.textWidth(label, big), gap = 18 * k, ww = what.isEmpty() ? 0 : gap + g.textWidth(what, t);
+        int big = h >= 2 * t + 8 * k ? t + t / 2 : t, lw = g.textWidth(label, big), gap = 18 * k, ww = what.isEmpty() ? 0 : gap + g.textWidth(what, t);
         int lx = x + (w - lw - ww) / 2;
         g.text(label, lx, y + (h - big) / 2, big, BLACK);
         if (ww > 0) g.text(what, lx + lw + gap, y + (h - t) / 2 + (big - t) / 3, t, 0xff1c3a24);
