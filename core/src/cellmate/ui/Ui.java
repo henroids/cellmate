@@ -325,7 +325,13 @@ public final class Ui {
         popupOverCanvas = true;
     }
 
-    private boolean popupOverCanvas;   // the window is about the pictures, so it opens over the canvas
+    private boolean popupOverCanvas;
+
+    private static final List<String> YES = Arrays.asList("Clear", "Choose where to save", "Start", "OK"),
+            NO = Arrays.asList("Keep them", "Go back", "Cancel");
+
+    /** The colour of a window's choice: green to go ahead, red to back out, 0 for neither. */
+    private static int toneOf(String choice) { return YES.contains(choice) ? START_GREEN : NO.contains(choice) ? CLEAR_RED : 0; }   // the window is about the pictures, so it opens over the canvas
 
     private void openPopup(String title, String[] info, String[] options, Runnable... actions) {
         popupTitle = title; popupInfo = info; popup = options; popupActions = actions; popupSel = 0;
@@ -1354,8 +1360,10 @@ public final class Ui {
         for (int i = 0; i < popup.length; i++) {
             int ry = popupY + i * rowH;
             boolean on = i == popupSel;
-            if (on) g.fill(popupX, ry, popupW, rowH, HILITE);
-            g.text(popup[i], popupX + 10 * k, ry + (rowH - t) / 2, t, on ? BLACK : WHITE);
+            // a yes (go ahead) is green, a no (back out) red, anything else the usual greys
+            int tone = toneOf(popup[i]);
+            if (on) g.fill(popupX, ry, popupW, rowH, tone != 0 ? tone : HILITE);
+            g.text(popup[i], popupX + 10 * k, ry + (rowH - t) / 2, t, on ? BLACK : tone != 0 ? tone : WHITE);
         }
     }
 
@@ -1401,7 +1409,8 @@ public final class Ui {
             String glyph = (String) items3[i], label = (String) items3[i + 1];
             int right = x;
             x -= g.textWidth(label, t);
-            g.text(label, x, y - t / 2, t, GREY);
+            int tone = toneOf(label);   // OK in green, Cancel in red
+            g.text(label, x, y - t / 2, t, tone != 0 ? tone : GREY);
             int gw = glyph.equals("LR") ? 2 * d + 4 * k : d;
             x -= 6 * k + gw;
             if (glyph.equals("LR")) {
