@@ -21,7 +21,7 @@ public class Shot {
                 File f = new File(kind == Ui.Pick.OUTPUT ? a[2] : a[1]);
                 uiThread.execute(() -> ui[0].picked(kind == Ui.Pick.OUTPUT ? kind : Ui.Pick.INPUT_FOLDER, f, f.getName()));
             }
-            public boolean canPickEither() { return true; }
+            public boolean canPickEither() { return !Boolean.getBoolean("shot.pickone"); }   // -Dshot.pickone=true: ask folder or image, as Android does
             public List<String> listImages(Object in, boolean folder) throws Exception { return files.listImages(in, folder); }
             public Picture decode(Object in, boolean folder, String rel) throws Exception { return files.decode(in, folder, rel); }
             public boolean exists(Object out, String rel) { return files.exists(out, rel); }

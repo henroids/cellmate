@@ -1346,7 +1346,10 @@ public final class Ui {
     }
 
     private void drawPopup(Surface g, int w, int h) {
-        popupRowH = rowH;
+        // big, easy-to-hit choices: twice a row on upright (touch) screens, half again on wide ones
+        boolean tall = w < h;
+        popupRowH = tall ? 2 * rowH : rowH * 3 / 2;
+        int ot = tall ? t * 5 / 4 : t;   // their text
         int lineH = t + 8 * k, pad = 14 * k;
         popupW = 24 * t;
         for (String line : popupInfo) popupW = Math.max(popupW, g.textWidth(line, t) + 2 * pad);
@@ -1354,7 +1357,7 @@ public final class Ui {
         boolean onCanvas = popupOverCanvas && !previewOnOtherScreen && previewW > 0;
         int ax = onCanvas ? previewX : 0, ay = onCanvas ? previewY : 0, aw = onCanvas ? previewW : w, ah = onCanvas ? previewH : h;
         popupW = Math.min(aw - (onCanvas ? 0 : 40 * k), popupW);
-        int ph = pad + lineH + popupInfo.length * lineH + pad + popup.length * rowH;
+        int ph = pad + lineH + popupInfo.length * lineH + pad + popup.length * popupRowH;
         popupX = ax + (aw - popupW) / 2;
         int top = Math.max(0, ay + (ah - ph) / 2);
         g.fill(0, 0, w, h, 0xc0000000);   // dim the menu behind
@@ -1364,12 +1367,12 @@ public final class Ui {
             g.text(fitText(g, popupInfo[i], popupW - 2 * pad, t), popupX + pad, top + pad + (i + 1) * lineH, t, GREY);
         popupY = top + pad + lineH + popupInfo.length * lineH + pad;
         for (int i = 0; i < popup.length; i++) {
-            int ry = popupY + i * rowH;
+            int ry = popupY + i * popupRowH;
             boolean on = i == popupSel;
             // a yes (go ahead) is green, a no (back out) red, anything else the usual greys
             int tone = toneOf(popup[i]);
-            if (on) g.fill(popupX, ry, popupW, rowH, tone != 0 ? tone : HILITE);
-            g.text(popup[i], popupX + 10 * k, ry + (rowH - t) / 2, t, on ? BLACK : tone != 0 ? tone : WHITE);
+            if (on) g.fill(popupX, ry, popupW, popupRowH, tone != 0 ? tone : HILITE);
+            g.text(popup[i], popupX + 10 * k, ry + (popupRowH - ot) / 2, ot, on ? BLACK : tone != 0 ? tone : WHITE);
         }
     }
 
