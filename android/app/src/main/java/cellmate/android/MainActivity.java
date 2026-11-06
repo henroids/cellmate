@@ -24,6 +24,7 @@ import android.provider.OpenableColumns;
 import android.view.Display;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
@@ -57,6 +58,7 @@ public final class MainActivity extends Activity implements Host {
     // Output folder lookups: parent document id + "/" + child name -> document id.
     private final Map<String, String> children = new ConcurrentHashMap<>();
     private final Set<String> listed = ConcurrentHashMap.newKeySet();   // folders whose children are all in "children"
+    private boolean multiTouch;   // more than one finger since the last touch began
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -66,11 +68,18 @@ public final class MainActivity extends Activity implements Host {
         };
         view.setFocusable(true);
         view.setDefaultFocusHighlightEnabled(false);
+        // pinch to zoom the preview; one finger taps, slides and scrolls as before
+        ScaleGestureDetector pinch = new ScaleGestureDetector(this, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            @Override public boolean onScale(ScaleGestureDetector d) { ui.pinch(d.getFocusX(), d.getFocusY(), d.getScaleFactor()); return true; }
+            @Override public void onScaleEnd(ScaleGestureDetector d) { ui.pinchEnd(); }
+        });
         view.setOnTouchListener((v, e) -> {
+            pinch.onTouchEvent(e);
             switch (e.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN: ui.pointerDown((int) e.getX(), (int) e.getY()); return true;
-                case MotionEvent.ACTION_MOVE: ui.pointerMove((int) e.getX(), (int) e.getY()); return true;
-                case MotionEvent.ACTION_UP: ui.pointerUp((int) e.getX(), (int) e.getY()); return true;
+                case MotionEvent.ACTION_DOWN: multiTouch = false; ui.pointerDown((int) e.getX(), (int) e.getY()); return true;
+                case MotionEvent.ACTION_POINTER_DOWN: multiTouch = true; ui.pointerCancel(); return true;   // a second finger: a pinch, not a tap
+                case MotionEvent.ACTION_MOVE: if (!multiTouch) ui.pointerMove((int) e.getX(), (int) e.getY()); return true;
+                case MotionEvent.ACTION_UP: if (!multiTouch) ui.pointerUp((int) e.getX(), (int) e.getY()); multiTouch = false; return true;
                 default: return true;
             }
         });
@@ -361,6 +370,7 @@ public final class MainActivity extends Activity implements Host {
         }
         @Override public int textWidth(String s, int size) { if (s == null) return 0; text.setTextSize(size); return Math.round(text.measureText(s)); }
         @Override public void image(Object image, int x, int y) { c.drawBitmap((Bitmap) image, x, y, null); }
+        @Override public void image(Object image, int x, int y, int w, int h) { c.drawBitmap((Bitmap) image, null, new Rect(x, y, x + w, y + h), null); }
         @Override public void clip(int x, int y, int w, int h) { c.save(); c.clipRect(new Rect(x, y, x + w, y + h)); }
         @Override public void unclip() { c.restore(); }
     }

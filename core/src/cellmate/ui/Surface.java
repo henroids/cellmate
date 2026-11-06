@@ -8,6 +8,8 @@ public interface Surface {
     int textWidth(String s, int size);
     /** Draws an image made with Host.makeImage, unscaled, at (x, y). */
     void image(Object image, int x, int y);
+    /** Draws an image stretched to w x h, without smoothing (pixels stay crisp). */
+    void image(Object image, int x, int y, int w, int h);
     void clip(int x, int y, int w, int h);
     void unclip();
 }

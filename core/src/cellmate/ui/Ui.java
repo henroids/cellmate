@@ -62,6 +62,10 @@ public final class Ui {
     private Style page = Style.BORDER;     // the style the preview shows
     private Object previewImg, beforeImg;
     private int previewImgW, previewImgH, beforeW, beforeH;
+    // preview zoom (pinch on phones): 1 = fit; zx, zy = the point of the picture at the canvas centre (0..1)
+    private double zoom = 1, zx = 0.5, zy = 0.5, previewImgZoom = 1;
+    private int boxX, boxY;          // where the canvas was last drawn on the main screen
+    private boolean panning;         // one finger is dragging the zoomed picture
     private Style previewImgStyle;
     private Picture picture;
     private String pictureKey;
@@ -91,7 +95,8 @@ public final class Ui {
 
     // ---- layout of the last frame, for touch and mouse
     private int k = 1, t = 20, rowH, menuX, menuY, menuW, menuH, previewX, previewY, previewW, previewH;
-    private List<Hit> hits = new ArrayList<>();               // what's tappable on the main screen (or, while drawing it, the preview screen)
+    private final List<Hit> mainHits = new ArrayList<>();     // what's tappable on the main screen
+    private List<Hit> hits = mainHits;                        // the list being drawn into (the preview screen swaps in its own)
     private List<Hit> previewHits = new ArrayList<>();        // what's tappable on the second screen's preview
 
     public Ui(Host host) {
@@ -425,6 +430,12 @@ public final class Ui {
         if (screen != Screen.MENU || popup != null) return;
         if (down != null && down.what == SCROLLBAR) { scrollTo(y); return; }
         if (sliding) { slide(down, x, y); return; }
+        // one finger dragging a zoomed-in picture moves around it
+        if (down != null && down.what == CANVAS && zoom > 1) {
+            if (!panning && Math.hypot(x - downX, y - downY) > 6 * k) { panning = true; panX = downX; panY = downY; }
+            if (panning) { pan(x - panX, y - panY); panX = x; panY = y; }
+            return;
+        }
         // a sideways drag on a chosen row's bar moves its setting (a plain tap chooses or un-chooses the row)
         if (!dragging && down != null && down.what instanceof Part && Math.abs(x - downX) > 6 * k && Math.abs(x - downX) > Math.abs(y - downY)) {
             sliding = true; slide(down, x, y); return;
@@ -436,6 +447,38 @@ public final class Ui {
         }
     }
 
+    /** A second finger came down: whatever the first one started isn't a tap or a drag. */
+    public void pointerCancel() { down = null; dragging = sliding = panning = false; }
+
+    /** Pinch on the preview (phones): scale around the fingers' centre (fx, fy). */
+    public void pinch(float fx, float fy, float scale) {
+        if (screen != Screen.MENU || popup != null || previewImg == null || boxW <= 0) return;
+        int dw = (int) Math.round(previewImgW / previewImgZoom), dh = (int) Math.round(previewImgH / previewImgZoom);   // size at zoom 1
+        double before = zoom, max = Math.max(1, Math.min(8, 2400.0 / Math.max(boxW, boxH)));
+        zoom = Math.max(1, Math.min(max, zoom * scale));
+        // keep the point under the fingers where it is
+        double w0 = dw * before, h0 = dh * before;
+        int left = place(boxX, boxW, (int) w0, zx), top = place(boxY, boxH, (int) h0, zy);
+        double u = (fx - left) / w0, v = (fy - top) / h0;
+        double w1 = dw * zoom, h1 = dh * zoom;
+        zx = clamp01((boxX + boxW / 2.0 - (fx - u * w1)) / w1);
+        zy = clamp01((boxY + boxH / 2.0 - (fy - v * h1)) / h1);
+        host.repaint();
+    }
+
+    /** The pinch is over: draw the picture sharp at its new size. */
+    public void pinchEnd() { schedulePreview(); }
+
+    private int panX, panY;
+
+    private void pan(int dx, int dy) {
+        double dw = previewImgW * zoom / previewImgZoom, dh = previewImgH * zoom / previewImgZoom;
+        zx = clamp01(zx - dx / dw); zy = clamp01(zy - dy / dh);
+        host.repaint();
+    }
+
+    private static double clamp01(double v) { return Math.max(0, Math.min(1, v)); }
+
     public void pointerUp(int x, int y) {
         tapUp(x, y);
         host.repaint();   // whatever the tap did (a window opening, a choice), show it now
@@ -445,6 +488,7 @@ public final class Ui {
         if (screen == Screen.RUNNING) { cancel.set(true); message = "Cancelling..."; host.repaint(); return; }
         if (screen == Screen.DONE) { screen = Screen.MENU; host.repaint(); return; }
         if (popup != null) { tapPopup(x, y); host.repaint(); return; }
+        if (panning) { panning = false; return; }
         if (sliding || dragging) { sliding = dragging = false; host.repaint(); return; }
         if (down == null) return;
         if (down.what == SCROLLBAR) { scrollTo(y); return; }
@@ -562,6 +606,7 @@ public final class Ui {
         } else {
             input = place; inputName = name; inputFolder = kind == Pick.INPUT_FOLDER;
             items = null; previewIndex = 0; picture = null; pictureKey = null; previewImg = beforeImg = null;
+            zoom = 1; zx = zy = 0.5;
             scan();
         }
         message = "";
@@ -599,7 +644,9 @@ public final class Ui {
         final Style style = page;
         final String rel = items.get(Math.min(previewIndex, items.size() - 1));
         final Object in = input; final boolean folder = inputFolder;
-        final int bw = boxW, bh = boxH, pw = pipW, ph = pipH;
+        final int pw = pipW, ph = pipH;
+        final double z = zoom;   // drawn at the zoomed size, so zooming in shows the real pixels
+        final int bw = (int) Math.round(boxW * z), bh = (int) Math.round(boxH * z);
         previewWorker.execute(() -> {
             if (seq != previewSeq.get()) return;
             try {
@@ -625,7 +672,7 @@ public final class Ui {
                 Object img = host.makeImage(shown.argb, shown.width, shown.height);
                 host.runOnUi(() -> {
                     if (seq != previewSeq.get()) return;
-                    previewImg = img; previewImgW = shown.width; previewImgH = shown.height; previewImgStyle = style;
+                    previewImg = img; previewImgW = shown.width; previewImgH = shown.height; previewImgStyle = style; previewImgZoom = z;
                     beforeImg = before; beforeW = photoW; beforeH = photoH;
                     host.repaint();
                 });
@@ -1207,22 +1254,26 @@ public final class Ui {
         if (input == null) { centered(g, "Tap or click here to add a photo or a folder", x, y, w, h, GREY); return; }
         if (items == null || items.isEmpty()) {
             centered(g, items == null ? "Looking for images..." : "No images found", x, y, w, h, DIM);
-            drawClear(g, x + w, y);
+            drawClear(g, x + w, y + h - (t + 12 * k));
             return;
         }
         int bw = w, bh = h - navH;
         int pw = Math.max(4 * t, w / 4), ph = pw;
         if (bw != boxW || bh != boxH || pw != pipW) { boxW = bw; boxH = bh; pipW = pw; pipH = ph; schedulePreview(); }
+        if (hits == mainHits) { boxX = x; boxY = y; }
         if (previewImg == null) centered(g, "Rendering...", x, y, w, bh, DIM);
         else {
-            int ix = x + (bw - previewImgW) / 2, iy = y + (bh - previewImgH) / 2;
-            g.image(previewImg, ix, iy);
-            clearX = ix + previewImgW; clearY = iy;   // Clear sits on the picture's top-right corner
-            if (beforeImg != null) {   // the original, small, in the top-right corner
-                int bx = ix + 6 * k, by = iy + 6 * k;
-                if (previewImgW < beforeW * 2) { bx = x; by = y; }
+            // the picture at the current zoom (stretched until the sharper one arrives), clipped to the canvas
+            int dw = (int) Math.round(previewImgW * zoom / previewImgZoom), dh = (int) Math.round(previewImgH * zoom / previewImgZoom);
+            int ix = place(x, bw, dw, zx), iy = place(y, bh, dh, zy);
+            g.clip(x, y, bw, bh);
+            if (dw == previewImgW && dh == previewImgH) g.image(previewImg, ix, iy); else g.image(previewImg, ix, iy, dw, dh);
+            if (beforeImg != null) {   // the original, small, in the top-left corner
+                int bx = Math.max(ix, x) + 6 * k, by = Math.max(iy, y) + 6 * k;
+                if (dw < beforeW * 2) { bx = x; by = y; }
                 g.image(beforeImg, bx, by);
             }
+            g.unclip();
         }
         // page line: < Style  2 / 3 >
         List<Style> list = chosenStyles();
@@ -1236,17 +1287,21 @@ public final class Ui {
         triangle(g, cx + lw / 2 + 16 * k, cyA, aw, false, list.size() > 1 ? WHITE : DIM);
         hits.add(new Hit(x, ly - 4 * k, w / 2, t + 8 * k, "", PAGE_LEFT, 0));
         hits.add(new Hit(x + w / 2, ly - 4 * k, w - w / 2, t + 8 * k, "", PAGE_RIGHT, 0));
-        if (previewImg != null) drawClear(g, clearX - 6 * k, clearY + 6 * k);
-        else drawClear(g, x + w, y);
+        drawClear(g, x + w, y + bh);
     }
 
-    private int clearX, clearY;   // the picture's top-right corner, where Clear goes
+    /** Where a picture dw wide goes in a canvas from x, w wide: centred if it fits, else showing point f of it in the middle (never past its edges). */
+    private static int place(int x, int w, int dw, double f) {
+        if (dw <= w) return x + (w - dw) / 2;
+        int left = (int) Math.round(x + w / 2.0 - f * dw);
+        return Math.max(x + w - dw, Math.min(x, left));
+    }
 
-    /** The clear button: a red X and the word, drawn over the picture with its top-right corner at (right, top). */
-    private void drawClear(Surface g, int right, int top) {
+    /** The clear button: a red X and the word, in the canvas's bottom-right corner (right, bottom). */
+    private void drawClear(Surface g, int right, int bottom) {
         String word = "Clear";
         int d = t, tw = g.textWidth(word, t), pad = 6 * k;
-        int bw = pad + d + 6 * k + tw + pad, bh = t + 2 * pad, bx = right - bw, by = top;
+        int bw = pad + d + 6 * k + tw + pad, bh = t + 2 * pad, bx = right - bw, by = bottom - bh;
         g.fill(bx, by, bw, bh, CHOSEN);
         runs(g, Engine.stamp(Style.STITCH, d), bx + pad, by + pad, d, CLEAR_RED);
         g.text(word, bx + pad + d + 6 * k, by + pad, t, WHITE);

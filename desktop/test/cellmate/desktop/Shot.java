@@ -52,6 +52,12 @@ public class Shot {
                 ImageIO.write(img, "png", new File(a[0], "shot" + (shot++) + ".png"));
                 continue;
             }
+            if (cmd.startsWith("pinch")) {   // pinchX,Y,SCALE then pinchend
+                if (cmd.equals("pinchend")) { uiThread.submit(() -> ui[0].pinchEnd()).get(); continue; }
+                String[] v = cmd.substring(5).split(",");
+                uiThread.submit(() -> ui[0].pinch(Float.parseFloat(v[0]), Float.parseFloat(v[1]), Float.parseFloat(v[2]))).get();
+                continue;
+            }
             if (cmd.startsWith("ptap")) {   // ptapX,Y on the second screen
                 String[] v = cmd.substring(4).split(",");
                 uiThread.submit(() -> ui[0].tapPreviewScreen(Integer.parseInt(v[0]), Integer.parseInt(v[1]))).get();

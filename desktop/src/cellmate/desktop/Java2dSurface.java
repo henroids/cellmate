@@ -41,6 +41,10 @@ final class Java2dSurface implements Surface {
     }
 
     @Override public void image(Object image, int x, int y) { g.drawImage((BufferedImage) image, x, y, null); }
+    @Override public void image(Object image, int x, int y, int w, int h) {
+        g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+        g.drawImage((BufferedImage) image, x, y, w, h, null);
+    }
 
     private final java.util.ArrayDeque<Shape> clips = new java.util.ArrayDeque<>();
 
