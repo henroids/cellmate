@@ -48,6 +48,19 @@ public final class Settings {
 
     /** The 8 accent colours: the same bright family as the colour patch. */
     public static final int[] SWATCHES = {0xffe93e8f, 0xffff6a1c, 0xfff6d55c, 0xff44d468, 0xff3caea3, 0xff2278ff, 0xff773ca6, 0xffa77d50};
+    /** An accent colour's dark, medium and light tones: the colour itself in the middle, kept well clear of black and white. */
+    public static int[] accentTones(int swatch) {
+        int c = SWATCHES[swatch];
+        return new int[]{mix(c, 0xff000000, 0.40), c, mix(c, 0xffffffff, 0.35)};
+    }
+
+    private static int mix(int a, int b, double t) {
+        int r = (int) Math.round((a >> 16 & 255) * (1 - t) + (b >> 16 & 255) * t);
+        int g = (int) Math.round((a >> 8 & 255) * (1 - t) + (b >> 8 & 255) * t);
+        int bl = (int) Math.round((a & 255) * (1 - t) + (b & 255) * t);
+        return 0xff000000 | r << 16 | g << 8 | bl;
+    }
+
     public static final String[] SWATCH_NAMES = {"Pink", "Orange", "Yellow", "Green", "Teal", "Blue", "Purple", "Brown"};
     /**
      * Accent amount, 5 steps: more takes bigger and fainter highlights, and more of them. Per

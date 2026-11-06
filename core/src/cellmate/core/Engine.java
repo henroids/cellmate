@@ -106,7 +106,8 @@ public final class Engine {
      * white shirt is a big bright shape, so it (and its edges) stays as it is. This is a white
      * top-hat: the lightness minus its "opening", which wipes out bright spots smaller than a few
      * cells and keeps big shapes. Weighted toward the brightest spots, the top share the amount
-     * asks for takes the accent colour, the same cells for every colour.
+     * asks for takes the accent colour (the same cells for every colour), in a dark, medium or
+     * light tone to match the grey it replaces.
      */
     private static void applyAccent(Picture p, Settings s, int cols, int rows, int[] color) {
         int[][] rgb = boxRgb(p, cols, rows);
@@ -124,8 +125,13 @@ public final class Engine {
         double[] sorted = score.clone();
         java.util.Arrays.sort(sorted);
         double cut = Math.max(1e-9, sorted[Math.max(0, n - want)]);
-        int ink = Settings.SWATCHES[s.swatch];
-        for (int i = 0; i < n; i++) if (score[i] >= cut) color[i] = ink;
+        // three tones of the accent, matched to the grey each spot would have been, for depth
+        int[] tones = Settings.accentTones(s.swatch);
+        for (int i = 0; i < n; i++) {
+            if (score[i] < cut) continue;
+            int grey = color[i] & 255;
+            color[i] = tones[grey >= 170 ? 2 : grey >= 85 ? 1 : 0];
+        }
     }
 
     /** The max (or min) of v over the (2r+1)-square around each cell, clipped at the edges. */
