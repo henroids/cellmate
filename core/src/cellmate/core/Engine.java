@@ -410,7 +410,10 @@ public final class Engine {
         double turn = Math.toRadians(s.value(st, 2));
         double strength = s.value(st, 3);                     // 1 = the original amount of melting
         double share = 0.35 + 0.25 * (strength - 1);
-        int rows = g.rows, cols = g.cols, pad = 2 + (int) Math.ceil(Math.max(0, strength - 1) * 3) + (int) Math.ceil(Math.max(0, outerF - 0.5) * c), n = c + 2 * pad;
+        // room around each bead for the most a melted one can swell (its wobble included), so its
+        // sides are never cut flat
+        double reach = (c * outerF + strength * 0.9) * (1 + strength * 0.12);
+        int rows = g.rows, cols = g.cols, pad = 2 + (int) Math.ceil(Math.max(0, reach - c / 2.0)), n = c + 2 * pad;
         int W = cols * c + 2 * pad, H = rows * c + 2 * pad;
         int[] out = new int[W * H];
         java.util.Arrays.fill(out, 0xff000000);
