@@ -315,16 +315,21 @@ public final class Ui {
                     savePrefs();
                 }, () -> { });
         popupSel = 1;   // "Keep them" until the user moves to "Clear"
+        popupOverCanvas = true;
     }
 
     private void pickInput() {
         if (host.canPickEither()) { host.pick(Pick.INPUT); return; }
         openPopup("Add pictures", new String[0], new String[]{"A folder of images", "One image"},
                 () -> host.pick(Pick.INPUT_FOLDER), () -> host.pick(Pick.INPUT_IMAGE));
+        popupOverCanvas = true;
     }
+
+    private boolean popupOverCanvas;   // the window is about the pictures, so it opens over the canvas
 
     private void openPopup(String title, String[] info, String[] options, Runnable... actions) {
         popupTitle = title; popupInfo = info; popup = options; popupActions = actions; popupSel = 0;
+        popupOverCanvas = false;
     }
 
     /** Chosen styles in menu order (what the preview pages through). */
@@ -1333,10 +1338,13 @@ public final class Ui {
         int lineH = t + 8 * k, pad = 14 * k;
         popupW = 24 * t;
         for (String line : popupInfo) popupW = Math.max(popupW, g.textWidth(line, t) + 2 * pad);
-        popupW = Math.min(w - 40 * k, popupW);
+        // centred on the canvas when it's about the pictures (and the canvas is on this screen), else on the screen
+        boolean onCanvas = popupOverCanvas && !previewOnOtherScreen && previewW > 0;
+        int ax = onCanvas ? previewX : 0, ay = onCanvas ? previewY : 0, aw = onCanvas ? previewW : w, ah = onCanvas ? previewH : h;
+        popupW = Math.min(aw - (onCanvas ? 0 : 40 * k), popupW);
         int ph = pad + lineH + popupInfo.length * lineH + pad + popup.length * rowH;
-        popupX = (w - popupW) / 2;
-        int top = (h - ph) / 2;
+        popupX = ax + (aw - popupW) / 2;
+        int top = Math.max(0, ay + (ah - ph) / 2);
         g.fill(0, 0, w, h, 0xc0000000);   // dim the menu behind
         g.fill(popupX, top, popupW, ph, CHOSEN);
         g.text(popupTitle, popupX + pad, top + pad, t, WHITE);
