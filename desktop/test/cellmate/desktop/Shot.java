@@ -10,14 +10,17 @@ import java.util.List;
 import java.util.concurrent.*;
 import javax.imageio.ImageIO;
 
-/** Headless check: drives the UI with keys and saves screenshots. args: out dir, input dir, output dir, w, h, then key script. */
+/** Headless check: drives the UI with keys and saves screenshots. args: out dir, input dir (or none), output dir (used when the UI asks where to save), w, h, then key script. */
 public class Shot {
     public static void main(String[] a) throws Exception {
         ExecutorService uiThread = Executors.newSingleThreadExecutor();
         Main files = new Main();   // reuse the desktop file code (no window)
         final Ui[] ui = new Ui[1];
         Host host = new Host() {
-            public void pick(Ui.Pick kind) { }
+            public void pick(Ui.Pick kind) {   // the "chosen" folder is always the one from the command line
+                File f = new File(kind == Ui.Pick.OUTPUT ? a[2] : a[1]);
+                uiThread.execute(() -> ui[0].picked(kind == Ui.Pick.OUTPUT ? kind : Ui.Pick.INPUT_FOLDER, f, f.getName()));
+            }
             public boolean canPickEither() { return true; }
             public List<String> listImages(Object in, boolean folder) throws Exception { return files.listImages(in, folder); }
             public Picture decode(Object in, boolean folder, String rel) throws Exception { return files.decode(in, folder, rel); }
@@ -38,8 +41,7 @@ public class Shot {
         uiThread.submit(() -> {
             ui[0] = new Ui(host);
             File in = new File(a[1]);
-            ui[0].picked(Ui.Pick.INPUT_FOLDER, in, in.getName());
-            ui[0].picked(Ui.Pick.OUTPUT, new File(a[2]), new File(a[2]).getName());
+            if (!a[1].equals("none")) ui[0].picked(Ui.Pick.INPUT_FOLDER, in, in.getName());
         }).get();
         int shot = 0;
         for (int i = 5; i < a.length; i++) {

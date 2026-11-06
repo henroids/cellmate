@@ -44,6 +44,7 @@ public final class Ui {
     private Object input, output;
     private boolean inputFolder;
     private String inputName = "", outputName = "";
+    private boolean startWhenSavePicked;   // the next folder picked for saving starts the run
     private List<String> items;            // images in the input (null while scanning)
     private int previewIndex;
     private String message = "";
@@ -219,8 +220,6 @@ public final class Ui {
 
     private List<Row> rows() {
         List<Row> r = new ArrayList<>();
-        r.add(new ValueRow("Input", "Input", () -> input != null ? inputName : "Choose", null, this::pickInput));
-        r.add(new ValueRow("Output", "Output", () -> output != null ? outputName : "Choose", null, () -> host.pick(Pick.OUTPUT)));
         r.add(new SliderRow("Detail", part("Detail", Settings.DETAIL.length, () -> Settings.nearest(Settings.DETAIL, s.cells),
                 v -> s.cells = Settings.DETAIL[v], v -> Settings.DETAIL[v] + " across"), () -> s.cells + " across", "160 across"));
         r.add(new SliderRow("Pixel", part("Pixel size", Settings.PIXEL.length, () -> Settings.nearest(Settings.PIXEL, s.cellSize),
@@ -292,9 +291,22 @@ public final class Ui {
 
     private void changed() { savePrefs(); schedulePreview(); host.repaint(); }
 
+    /** The clear button on the preview: asks first, then forgets the pictures. */
+    private void confirmClear() {
+        String count = items == null ? "" : "  (" + items.size() + (items.size() == 1 ? " image)" : " images)");
+        openPopup("Clear the pictures?", new String[]{inputName + count},
+                new String[]{"Clear", "Keep them"}, () -> {
+                    input = null; inputName = ""; items = null; previewIndex = 0;
+                    picture = null; pictureKey = null; previewImg = beforeImg = null;
+                    message = "";
+                    savePrefs();
+                }, () -> { });
+        popupSel = 1;   // "Keep them" until the user moves to "Clear"
+    }
+
     private void pickInput() {
         if (host.canPickEither()) { host.pick(Pick.INPUT); return; }
-        openPopup("Input", new String[0], new String[]{"A folder of images", "One image"},
+        openPopup("Add pictures", new String[0], new String[]{"A folder of images", "One image"},
                 () -> host.pick(Pick.INPUT_FOLDER), () -> host.pick(Pick.INPUT_IMAGE));
     }
 
@@ -392,7 +404,7 @@ public final class Ui {
         boolean contains(int px, int py) { return px >= x && py >= y && px < x + w && py < y + h; }
     }
 
-    private static final Object ROW = new Object(), SWATCH = new Object(), SCROLLBAR = new Object(), PAGE_LEFT = new Object(), PAGE_RIGHT = new Object(), HELP = new Object();
+    private static final Object ROW = new Object(), SWATCH = new Object(), SCROLLBAR = new Object(), CANVAS = new Object(), CLEAR = new Object(), PAGE_LEFT = new Object(), PAGE_RIGHT = new Object(), HELP = new Object();
     private Hit down;
     private int downX, downY, lastY;
     private boolean dragging, sliding;
@@ -425,6 +437,8 @@ public final class Ui {
         if (sliding || dragging) { sliding = dragging = false; host.repaint(); return; }
         if (down == null) return;
         if (down.what == SCROLLBAR) { scrollTo(y); return; }
+        if (down.what == CANVAS) { pickInput(); return; }   // a tap on the preview adds (or changes) the pictures
+        if (down.what == CLEAR) { confirmClear(); return; }
         if (down.what == PAGE_LEFT) { turnPage(-1); return; }
         if (down.what == PAGE_RIGHT) { turnPage(1); return; }
         if (down.what == HELP) { key((Key) helpKeys.get(down.index)); return; }
@@ -516,7 +530,13 @@ public final class Ui {
     public void picked(Pick kind, Object place, String name) {
         if (place == null) return;
         if (kind == Pick.OUTPUT) {
+            if (!startWhenSavePicked) return;
+            startWhenSavePicked = false;
+            if (inputFolder && host.isInside(place, input)) { message = "Choose somewhere outside the folder of pictures."; host.repaint(); return; }
             output = place; outputName = name;
+            begin();
+            host.repaint();
+            return;
         } else {
             input = place; inputName = name; inputFolder = kind == Pick.INPUT_FOLDER;
             items = null; previewIndex = 0; picture = null; pictureKey = null; previewImg = beforeImg = null;
@@ -596,12 +616,10 @@ public final class Ui {
 
     private void start() {
         List<Style> chosen = chosenStyles();
-        if (input == null) { message = "Choose an input first."; return; }
-        if (output == null) { message = "Choose an output folder first."; return; }
+        if (input == null) { pickInput(); return; }
         if (chosen.isEmpty()) { message = "Choose at least one style."; return; }
         if (items == null) { message = "Still looking for images..."; return; }
         if (items.isEmpty()) { message = "No images to convert."; return; }
-        if (inputFolder && host.isInside(output, input)) { message = "Pick an output folder outside the input folder."; return; }
         List<String> names = new ArrayList<>();
         for (Style st : chosen) names.add(st.label);
         String look = s.color ? s.colors + " colors" : s.greyTones + " grey tones" + (s.accent ? ", " + Settings.SWATCH_NAMES[s.swatch] + " accent" : "");
@@ -609,8 +627,9 @@ public final class Ui {
                 startSummary(),
                 String.join(", ", names),
                 look + ",  " + s.cells + " across,  " + s.cellSize + " px",
-                "Into " + outputName + (replace ? ",  replacing existing files" : ",  skipping existing files")},
-                new String[]{"Start", "Go back"}, this::begin, () -> { });
+                replace ? "Existing files will be replaced" : "Existing files will be skipped"},
+                new String[]{"Choose where to save", "Go back"},
+                () -> { startWhenSavePicked = true; host.pick(Pick.OUTPUT); }, () -> { });
     }
 
     /** Converts everything, once the start window is confirmed. */
@@ -1132,10 +1151,15 @@ public final class Ui {
     // ---- preview
 
     private void drawPreview(Surface g, int x, int y, int w, int h) {
-        if (input == null) { centered(g, "Choose an input folder or image", x, y, w, h, DIM); return; }
-        if (items == null) { centered(g, "Looking for images...", x, y, w, h, DIM); return; }
-        if (items.isEmpty()) { centered(g, "No images found", x, y, w, h, DIM); return; }
         int navH = t + 12 * k;
+        // the whole canvas is the button to add pictures, or to change them
+        hits.add(new Hit(x, y, w, input == null ? h : h - navH, "", CANVAS, 0));
+        if (input == null) { centered(g, "Tap or click here to add a photo or a folder", x, y, w, h, GREY); return; }
+        if (items == null || items.isEmpty()) {
+            centered(g, items == null ? "Looking for images..." : "No images found", x, y, w, h, DIM);
+            drawClear(g, x, y, w);
+            return;
+        }
         int bw = w, bh = h - navH;
         int pw = Math.max(4 * t, w / 4), ph = pw;
         if (bw != boxW || bh != boxH || pw != pipW) { boxW = bw; boxH = bh; pipW = pw; pipH = ph; schedulePreview(); }
@@ -1161,6 +1185,18 @@ public final class Ui {
         triangle(g, cx + lw / 2 + 16 * k, cyA, aw, false, list.size() > 1 ? WHITE : DIM);
         hits.add(new Hit(x, ly - 4 * k, w / 2, t + 8 * k, "", PAGE_LEFT, 0));
         hits.add(new Hit(x + w / 2, ly - 4 * k, w - w / 2, t + 8 * k, "", PAGE_RIGHT, 0));
+        drawClear(g, x, y, w);
+    }
+
+    /** The clear button: an X and the word, in the preview's top-right corner. */
+    private void drawClear(Surface g, int x, int y, int w) {
+        String word = "Clear";
+        int d = t, tw = g.textWidth(word, t), pad = 6 * k;
+        int bw = pad + d + 6 * k + tw + pad, bh = t + 2 * pad, bx = x + w - bw, by = y;
+        g.fill(bx, by, bw, bh, CHOSEN);
+        runs(g, Engine.stamp(Style.STITCH, d), bx + pad, by + pad, d, WHITE);
+        g.text(word, bx + pad + d + 6 * k, by + pad, t, WHITE);
+        hits.add(new Hit(bx, by, bw, bh, "", CLEAR, 0));
     }
 
     private void drawPopup(Surface g, int w, int h) {
@@ -1322,7 +1358,6 @@ public final class Ui {
         b.append("styles=").append(st).append('\n');
         for (Map.Entry<String, String> e : savedKnobs.entrySet()) b.append("knobs4.").append(e.getKey()).append('=').append(e.getValue()).append('\n');
         if (input != null) b.append("input=").append(inputFolder ? "d" : "f").append(host.savePlace(input)).append('\n').append("inputName=").append(inputName).append('\n');
-        if (output != null) b.append("output=").append(host.savePlace(output)).append('\n').append("outputName=").append(outputName).append('\n');
         try { host.savePrefs(b.toString()); } catch (Exception ignored) { }
     }
 
@@ -1360,11 +1395,6 @@ public final class Ui {
         if (in != null && in.length() > 1) {
             Object place = host.restorePlace(in.substring(1));
             if (place != null) { input = place; inputFolder = in.charAt(0) == 'd'; inputName = m.getOrDefault("inputName", ""); scan(); }
-        }
-        String out = m.get("output");
-        if (out != null) {
-            Object place = host.restorePlace(out);
-            if (place != null) { output = place; outputName = m.getOrDefault("outputName", ""); }
         }
     }
 }
