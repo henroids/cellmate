@@ -30,6 +30,7 @@ import android.view.WindowInsetsController;
 import cellmate.core.Engine;
 import cellmate.core.Orientation;
 import cellmate.core.Picture;
+import cellmate.core.Png;
 import cellmate.ui.Host;
 import cellmate.ui.Plan;
 import cellmate.ui.Surface;
@@ -55,6 +56,7 @@ public final class MainActivity extends Activity implements Host {
     private final Map<String, String> scanned = new ConcurrentHashMap<>();
     // Output folder lookups: parent document id + "/" + child name -> document id.
     private final Map<String, String> children = new ConcurrentHashMap<>();
+    private final Set<String> listed = ConcurrentHashMap.newKeySet();   // folders whose children are all in "children"
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -170,7 +172,7 @@ public final class MainActivity extends Activity implements Host {
         int flags = Intent.FLAG_GRANT_READ_URI_PERMISSION | (req == REQ_OUTPUT ? Intent.FLAG_GRANT_WRITE_URI_PERMISSION : 0);
         try { getContentResolver().takePersistableUriPermission(uri, flags); } catch (SecurityException ignored) { }
         Ui.Pick kind = req == REQ_FOLDER ? Ui.Pick.INPUT_FOLDER : req == REQ_IMAGE ? Ui.Pick.INPUT_IMAGE : Ui.Pick.OUTPUT;
-        if (kind == Ui.Pick.OUTPUT) children.clear();
+        if (kind == Ui.Pick.OUTPUT) { children.clear(); listed.clear(); }
         ui.picked(kind, uri, displayName(uri, kind != Ui.Pick.INPUT_IMAGE));
     }
 
@@ -251,15 +253,20 @@ public final class MainActivity extends Activity implements Host {
     }
 
     /** Finds a child document by name (cached); null if missing. */
+    /**
+     * The document id of a folder's child, or null. Each folder is listed once (then everything
+     * made in it is noted here), so checking many files doesn't re-list the folder every time.
+     */
     private String child(Uri tree, String parentId, String name) {
         String key = parentId + "/" + name;
         String id = children.get(key);
-        if (id != null) return id;
+        if (id != null || listed.contains(parentId)) return id;
         Uri kids = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId);
         try (Cursor c = getContentResolver().query(kids, COLS, null, null, null)) {
             if (c == null) return null;
             while (c.moveToNext()) children.put(parentId + "/" + c.getString(1), c.getString(0));
         }
+        listed.add(parentId);
         return children.get(key);
     }
 
@@ -270,8 +277,17 @@ public final class MainActivity extends Activity implements Host {
         return true;
     }
 
-    @Override public synchronized void writePng(Object out, String rel, Engine.Image image) throws Exception {
-        Uri tree = (Uri) out;
+    @Override public void writePng(Object out, String rel, Engine.Image image) throws Exception {
+        byte[] png = Png.encode(image);   // the slow part, done outside the lock so pictures encode side by side
+        Uri file = makeFile((Uri) out, rel);
+        try (OutputStream os = getContentResolver().openOutputStream(file, "w")) {
+            if (os == null) throw new IOException("couldn't write " + rel);
+            os.write(png);
+        }
+    }
+
+    /** Makes (or replaces) the file at rel, and any folders on the way; one at a time, so two pictures don't make the same folder twice. */
+    private synchronized Uri makeFile(Uri tree, String rel) throws IOException {
         ContentResolver cr = getContentResolver();
         String[] parts = rel.split("/");
         String id = DocumentsContract.getTreeDocumentId(tree);
@@ -283,6 +299,7 @@ public final class MainActivity extends Activity implements Host {
                 if (made == null) throw new IOException("couldn't create folder " + parts[i]);
                 next = DocumentsContract.getDocumentId(made);
                 children.put(id + "/" + parts[i], next);
+                listed.add(next);   // just made, so empty: no need to list it
             }
             id = next;
         }
@@ -292,12 +309,7 @@ public final class MainActivity extends Activity implements Host {
         Uri file = DocumentsContract.createDocument(cr, DocumentsContract.buildDocumentUriUsingTree(tree, id), "image/png", name);
         if (file == null) throw new IOException("couldn't create " + name);
         children.put(id + "/" + name, DocumentsContract.getDocumentId(file));
-        Bitmap b = Bitmap.createBitmap(image.argb, image.width, image.height, Bitmap.Config.ARGB_8888);
-        try (OutputStream os = cr.openOutputStream(file, "w")) {
-            if (os == null || !b.compress(Bitmap.CompressFormat.PNG, 100, os)) throw new IOException("couldn't write " + name);
-        } finally {
-            b.recycle();
-        }
+        return file;
     }
 
     @Override public boolean isInside(Object out, Object in) {

@@ -64,7 +64,11 @@ public final class Ui {
     private Style previewImgStyle;
     private Picture picture;
     private String pictureKey;
-    private Engine.Image beforeSmall;   // the preview's "before" picture, kept while the photo and its box stay the same
+    // the preview's grid, kept while only the style sliders change (they don't affect it)
+    private Grid gridCache;
+    private String gridKey;
+    private Engine.Image beforeSmall;
+    private Object beforeObject;        // beforeSmall, ready to draw   // the preview's "before" picture, kept while the photo and its box stay the same
     private int beforeBoxW, beforeBoxH;
     private int boxW, boxH, pipW, pipH;
 
@@ -590,12 +594,13 @@ public final class Ui {
                 if (newPicture || photo == null || pw != beforeBoxW || ph != beforeBoxH) {
                     photo = beforeSmall = Engine.fit(new Engine.Image(p.width, p.height, p.argb), pw, ph);
                     beforeBoxW = pw; beforeBoxH = ph;
+                    beforeObject = host.makeImage(photo.argb, photo.width, photo.height);
                 }
                 final int photoW = photo.width, photoH = photo.height;
-                Object before = host.makeImage(photo.argb, photoW, photoH);
+                final Object before = beforeObject;
                 if (seq != previewSeq.get()) return;
                 // drawn at the size it's shown, not the full output size: the same look, many times faster
-                Grid grid = Engine.grid(p, set);
+                Grid grid = previewGrid(p, key, set);
                 int onScreen = (int) Math.ceil(Math.min(bw / (double) grid.cols, bh / (double) grid.rows));
                 int cell = Math.max(2, Math.min(set.cellSizeFor(grid.cols, grid.rows), onScreen));
                 Engine.Image shown = Engine.fit(Engine.draw(grid, style, cell, set), bw, bh);
@@ -630,6 +635,13 @@ public final class Ui {
                 replace ? "Existing files will be replaced" : "Existing files will be skipped"},
                 new String[]{"Choose where to save", "Go back"},
                 () -> { startWhenSavePicked = true; host.pick(Pick.OUTPUT); }, () -> { });
+    }
+
+    private synchronized Grid previewGrid(Picture p, String pictureKey, Settings set) {
+        String key = pictureKey + "|" + set.color + "|" + set.greyTones + "|" + set.colors + "|" + set.accent + "|"
+                + set.swatch + "|" + set.accentRange + "|" + set.cells;
+        if (!key.equals(gridKey)) { gridCache = Engine.grid(p, set); gridKey = key; }
+        return gridCache;
     }
 
     /** Converts everything, once the start window is confirmed. */

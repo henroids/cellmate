@@ -3,6 +3,7 @@ package cellmate.desktop;
 import cellmate.core.Engine;
 import cellmate.core.Orientation;
 import cellmate.core.Picture;
+import cellmate.core.Png;
 import cellmate.ui.Host;
 import cellmate.ui.Plan;
 import cellmate.ui.Ui;
@@ -170,7 +171,7 @@ public final class Main implements Host {
     @Override public Picture decode(Object input, boolean folder, String rel) throws IOException {
         File f = folder ? new File((File) input, rel) : (File) input;
         byte[] data = Files.readAllBytes(f.toPath());
-        BufferedImage im = ImageIO.read(new ByteArrayInputStream(data));
+        BufferedImage im = read(data);
         if (im == null) throw new IOException("this kind of image can't be opened on this computer");
         int w = im.getWidth(), h = im.getHeight();
         int[] px = im.getRGB(0, 0, w, h, null, 0, w);
@@ -183,16 +184,37 @@ public final class Main implements Host {
         return Orientation.apply(w, h, px, Orientation.fromJpeg(data));
     }
 
+    /**
+     * Reads an image no bigger than needed: the most detail is 160 pixels across, so a photo is
+     * read at every 2nd (4th...) pixel while its short side stays 1600 or more. Much faster, and a
+     * fraction of the memory, for big camera photos.
+     */
+    private static BufferedImage read(byte[] data) throws IOException {
+        try (javax.imageio.stream.ImageInputStream in = ImageIO.createImageInputStream(new ByteArrayInputStream(data))) {
+            Iterator<javax.imageio.ImageReader> readers = ImageIO.getImageReaders(in);
+            if (!readers.hasNext()) return null;
+            javax.imageio.ImageReader r = readers.next();
+            try {
+                r.setInput(in);
+                int step = 1, shortSide = Math.min(r.getWidth(0), r.getHeight(0));
+                while (shortSide / (step * 2) >= 1600) step *= 2;
+                javax.imageio.ImageReadParam param = r.getDefaultReadParam();
+                if (step > 1) param.setSourceSubsampling(step, step, 0, 0);
+                return r.read(0, param);
+            } finally {
+                r.dispose();
+            }
+        }
+    }
+
     @Override public boolean exists(Object out, String rel) { return new File((File) out, rel).exists(); }
 
     @Override public void writePng(Object out, String rel, Engine.Image image) throws IOException {
         File f = new File((File) out, rel);
         File dir = f.getParentFile();
         if (dir != null && !dir.isDirectory() && !dir.mkdirs()) throw new IOException("couldn't create " + dir);
-        BufferedImage bi = new BufferedImage(image.width, image.height, BufferedImage.TYPE_INT_RGB);
-        bi.setRGB(0, 0, image.width, image.height, image.argb, 0, image.width);
         File tmp = new File(f.getPath() + ".part");
-        if (!ImageIO.write(bi, "png", tmp)) throw new IOException("PNG writer missing");
+        Files.write(tmp.toPath(), Png.encode(image));
         Files.move(tmp.toPath(), f.toPath(), StandardCopyOption.REPLACE_EXISTING);
     }
 
