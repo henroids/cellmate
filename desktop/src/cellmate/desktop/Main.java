@@ -63,7 +63,7 @@ public final class Main implements Host {
                     case KeyEvent.VK_DOWN: case KeyEvent.VK_S: ui.key(Ui.Key.DOWN); break;
                     case KeyEvent.VK_LEFT: case KeyEvent.VK_A: ui.key(Ui.Key.LEFT); break;
                     case KeyEvent.VK_RIGHT: case KeyEvent.VK_D: ui.key(Ui.Key.RIGHT); break;
-                    case KeyEvent.VK_ENTER: case KeyEvent.VK_SPACE: ui.key(Ui.Key.A); break;
+                    case KeyEvent.VK_ENTER: case KeyEvent.VK_SPACE: ui.key(e.isControlDown() && e.getKeyCode() == KeyEvent.VK_ENTER ? Ui.Key.START : Ui.Key.A); break;
                     case KeyEvent.VK_ESCAPE: case KeyEvent.VK_BACK_SPACE: ui.key(Ui.Key.B); break;
                     case KeyEvent.VK_TAB: ui.key(e.isShiftDown() ? Ui.Key.PREV : Ui.Key.NEXT); break;
                     case KeyEvent.VK_Q: ui.key(Ui.Key.PREV); break;
@@ -72,6 +72,7 @@ public final class Main implements Host {
                     case KeyEvent.VK_CLOSE_BRACKET: case KeyEvent.VK_PAGE_DOWN: ui.key(Ui.Key.PAGE_NEXT); break;
                     case KeyEvent.VK_X: ui.key(Ui.Key.SAVE); break;
                     case KeyEvent.VK_Y: ui.key(Ui.Key.RESET); break;
+                    case KeyEvent.VK_F5: ui.key(Ui.Key.START); break;   // Ctrl+Enter too, below
                     default: break;
                 }
             }

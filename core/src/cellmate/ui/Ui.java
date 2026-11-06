@@ -25,7 +25,10 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public final class Ui {
     public enum Pick { INPUT, INPUT_FOLDER, INPUT_IMAGE, OUTPUT }
-    public enum Key { UP, DOWN, LEFT, RIGHT, A, B, PREV, NEXT, PAGE_PREV, PAGE_NEXT, SAVE, RESET }
+    public enum Key { UP, DOWN, LEFT, RIGHT, A, B, PREV, NEXT, PAGE_PREV, PAGE_NEXT, SAVE, RESET, START }
+
+    /** The Start button: the accent palette's green. */
+    static final int START_GREEN = 0xff44d468;
 
     /** Background of a chosen row (and the empty part of its progress bar). */
     static final int CHOSEN = 0xff222222;
@@ -275,7 +278,6 @@ public final class Ui {
                 previewIndex = Math.floorMod(previewIndex + d, items.size()); schedulePreview();
             }, null));
         r.add(new ValueRow("Existing", "Existing files", () -> replace ? "Replace" : "Skip", d -> { replace = !replace; savePrefs(); }, null));
-        r.add(new ValueRow("Start", "Start", this::startSummary, null, this::start));
         r.add(new ValueRow("Quit", "Quit", () -> "", null, host::quit));
         return r;
     }
@@ -373,6 +375,7 @@ public final class Ui {
             case B: if (i != 0) select(r, 0); break;
             case SAVE: if (row.style() != null) save(row.style()); break;
             case RESET: resetAll(); break;
+            case START: start(); break;
         }
         host.repaint();
     }
@@ -415,7 +418,7 @@ public final class Ui {
         boolean contains(int px, int py) { return px >= x && py >= y && px < x + w && py < y + h; }
     }
 
-    private static final Object ROW = new Object(), SWATCH = new Object(), SCROLLBAR = new Object(), CANVAS = new Object(), CLEAR = new Object(), PAGE_LEFT = new Object(), PAGE_RIGHT = new Object(), HELP = new Object();
+    private static final Object ROW = new Object(), START_BUTTON = new Object(), SWATCH = new Object(), SCROLLBAR = new Object(), CANVAS = new Object(), CLEAR = new Object(), PAGE_LEFT = new Object(), PAGE_RIGHT = new Object(), HELP = new Object();
     private Hit down;
     private int downX, downY, lastY;
     private boolean dragging, sliding;
@@ -492,7 +495,8 @@ public final class Ui {
         if (sliding || dragging) { sliding = dragging = false; host.repaint(); return; }
         if (down == null) return;
         if (down.what == SCROLLBAR) { scrollTo(y); return; }
-        if (down.what == CANVAS) { pickInput(); return; }   // a tap on the preview adds (or changes) the pictures
+        if (down.what == CANVAS) { pickInput(); return; }
+        if (down.what == START_BUTTON) { start(); return; }   // a tap on the preview adds (or changes) the pictures
         if (down.what == CLEAR) { confirmClear(); return; }
         if (down.what == PAGE_LEFT) { turnPage(-1); return; }
         if (down.what == PAGE_RIGHT) { turnPage(1); return; }
@@ -800,6 +804,10 @@ public final class Ui {
             return;
         }
 
+        // the big green Start button along the bottom
+        int startH = 2 * t + 8 * k, startY = midY + midH - startH;
+        midH -= startH + 12 * k;
+
         if (previewOnOtherScreen) {
             menuX = w / 8; menuY = midY; menuW = w - w / 4; menuH = midH;
             previewW = previewH = 0;
@@ -813,6 +821,7 @@ public final class Ui {
         menuW -= 14 * k;   // room for the scroll bar
         drawMenu(g);
         if (!previewOnOtherScreen) drawPreview(g, previewX, previewY, previewW, previewH);
+        drawStart(g, 14 * k, startY, w - 28 * k, startH);
 
         List<Row> r = rows();
         Row row = r.get(selectedIndex(r));
@@ -1295,6 +1304,17 @@ public final class Ui {
         if (dw <= w) return x + (w - dw) / 2;
         int left = (int) Math.round(x + w / 2.0 - f * dw);
         return Math.max(x + w - dw, Math.min(x, left));
+    }
+
+    /** The Start button: green, "Start" and what it will make, in black. */
+    private void drawStart(Surface g, int x, int y, int w, int h) {
+        g.fill(x, y, w, h, START_GREEN);
+        String what = startSummary(), label = "Start";
+        int big = t + t / 2, lw = g.textWidth(label, big), gap = 18 * k, ww = what.isEmpty() ? 0 : gap + g.textWidth(what, t);
+        int lx = x + (w - lw - ww) / 2;
+        g.text(label, lx, y + (h - big) / 2, big, BLACK);
+        if (ww > 0) g.text(what, lx + lw + gap, y + (h - t) / 2 + (big - t) / 3, t, 0xff1c3a24);
+        hits.add(new Hit(x, y, w, h, "", START_BUTTON, 0));
     }
 
     /** The clear button: a red X and the word, in the canvas's bottom-right corner (right, bottom). */
