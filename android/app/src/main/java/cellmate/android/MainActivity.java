@@ -220,8 +220,10 @@ public final class MainActivity extends Activity implements Host {
         BitmapFactory.decodeByteArray(data, 0, data.length, o);
         if (o.outWidth <= 0) throw new IOException("can't open this image");
         o.inJustDecodeBounds = false;
+        // Decode no bigger than needed: the most detail is 160 pixels across, so 1600 on the
+        // short side is plenty, and halving the decode is much faster and lighter on memory.
         o.inSampleSize = 1;
-        while ((long) (o.outWidth / o.inSampleSize) * (o.outHeight / o.inSampleSize) > 32_000_000L) o.inSampleSize *= 2;  // memory guard
+        while (Math.min(o.outWidth, o.outHeight) / (o.inSampleSize * 2) >= 1600) o.inSampleSize *= 2;
         o.inPreferredConfig = Bitmap.Config.ARGB_8888;
         Bitmap b = BitmapFactory.decodeByteArray(data, 0, data.length, o);
         if (b == null) throw new IOException("can't open this image");

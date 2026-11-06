@@ -322,18 +322,12 @@ public final class Engine {
     /** Draws with each style's default knobs. */
     public static Image draw(Grid g, Settings.Style style, int cellSize) { return draw(g, style, cellSize, new Settings()); }
 
-    /** The saved picture: exactly as pixel_crt.py draws it. */
-    public static Image draw(Grid g, Settings.Style style, int cellSize, Settings s) { return draw(g, style, cellSize, s, SUPERSAMPLE); }
-
-    /** A quicker draw for the on-screen preview: Border, Rounded and Jitter use half the supersampling. */
-    public static Image drawPreview(Grid g, Settings.Style style, int cellSize, Settings s) { return draw(g, style, cellSize, s, 2); }
-
-    private static Image draw(Grid g, Settings.Style style, int cellSize, Settings s, int supersample) {
+    public static Image draw(Grid g, Settings.Style style, int cellSize, Settings s) {
         switch (style) {
             case SOLID: return solid(g, cellSize, s.value(style, 0), s.value(style, 1));
             case STITCH: case BEADS: return stamps(g, cellSize, stamp(style, cellSize, s));
             case MELTED: return melted(g, cellSize, s);
-            default: return blocks(g, cellSize, style, s.value(style, 0), supersample);
+            default: return blocks(g, cellSize, style, s.value(style, 0));
         }
     }
 
@@ -469,106 +463,66 @@ public final class Engine {
     }
 
     /**
-     * Border, rounded and jitter: squares drawn larger (4x, as pixel_crt.py does) on a grey
-     * background, then scaled down with Lanczos. Streamed a few rows at a time to keep memory small.
+     * Border, rounded and jitter: squares on a grey background, with smooth edges. Each output
+     * pixel takes as much of its square's colour as the square covers of it (measured on a 4x
+     * finer grid), so nothing is ever drawn bigger than the picture being made.
      */
-    private static Image blocks(Grid g, int cellSize, Settings.Style style, double amount, int supersample) {
-        final int c = cellSize * supersample, cols = g.cols, rows = g.rows;
-        final int W = cols * c, H = rows * c, w = cols * cellSize, h = rows * cellSize;
+    private static Image blocks(Grid g, int cellSize, Settings.Style style, double amount) {
+        final int ss = SUPERSAMPLE, c = cellSize * ss, cols = g.cols, rows = g.rows;
+        final int w = cols * cellSize, h = rows * cellSize;
         final double inset = style == Settings.Style.BORDER ? amount : style == Settings.Style.JITTER ? 0.03 : 0.0;
-        double[] jitter = new double[rows * cols];
-        if (style == Settings.Style.JITTER) {
-            Random rnd = new Random(7);
-            for (int i = 0; i < jitter.length; i++) jitter[i] = amount * (2 * rnd.nextDouble() - 1);
-        }
-        // Per cell: inclusive rectangle in supersampled pixels (Pillow truncates the corners).
-        int[] x0 = new int[rows * cols], x1 = new int[rows * cols], y0 = new int[rows * cols], y1 = new int[rows * cols];
-        for (int y = 0; y < rows; y++) for (int x = 0; x < cols; x++) {
-            int i = y * cols + x;
-            double m = (inset + jitter[i]) * c;
-            x0[i] = (int) (x * c + m); y0[i] = (int) (y * c + m);
-            x1[i] = (int) ((x + 1) * c - m - 1); y1[i] = (int) ((y + 1) * c - m - 1);
-        }
-        final boolean[] round = style == Settings.Style.ROUNDED ? roundedMask(c, amount) : null;
-
-        int[] bx = new int[2 * w], by = new int[2 * h];
-        int[][] kx = coeffs(W, w, bx), ky = coeffs(H, h, by);
         int[] out = new int[w * h];
-        // Horizontally resampled super-rows, cached while the vertical window slides down.
-        java.util.HashMap<Integer, int[][]> cache = new java.util.HashMap<>();
-        int[] line = new int[W * 3];
-        for (int yy = 0; yy < h; yy++) {
-            int ymin = by[2 * yy], cnt = by[2 * yy + 1];
-            final int keepFrom = ymin;
-            cache.keySet().removeIf(k -> k < keepFrom);
-            long[][] acc = new long[3][w];
-            for (int ch = 0; ch < 3; ch++) java.util.Arrays.fill(acc[ch], 1L << (PB - 1));
-            for (int t = 0; t < cnt; t++) {
-                int sy = ymin + t;
-                int[][] hr = cache.get(sy);
-                if (hr == null) {
-                    superRow(g, sy, c, x0, x1, y0, y1, round, line);
-                    hr = new int[3][w];
-                    for (int xx = 0; xx < w; xx++) {
-                        int[] k = kx[xx]; int xmin = bx[2 * xx];
-                        long r = 1L << (PB - 1), gg = r, b = r;
-                        for (int q = 0; q < k.length; q++) {
-                            int base = (xmin + q) * 3;
-                            r += (long) line[base] * k[q]; gg += (long) line[base + 1] * k[q]; b += (long) line[base + 2] * k[q];
+        java.util.Arrays.fill(out, 0xff000000 | BACKGROUND << 16 | BACKGROUND << 8 | BACKGROUND);
+
+        if (style == Settings.Style.ROUNDED) {
+            // every cell has the same shape: work out its coverage once, then paint each cell
+            boolean[] round = roundedMask(c, amount);
+            int[] cover = new int[cellSize * cellSize];
+            for (int y = 0; y < c; y++) for (int x = 0; x < c; x++) if (round[y * c + x]) cover[(y / ss) * cellSize + x / ss]++;
+            for (int r = 0; r < rows; r++)
+                for (int k = 0; k < cols; k++) {
+                    int col = g.color[r * cols + k];
+                    for (int y = 0; y < cellSize; y++)
+                        for (int x = 0; x < cellSize; x++) {
+                            int i = (r * cellSize + y) * w + k * cellSize + x;
+                            out[i] = over(out[i], col, cover[y * cellSize + x], ss * ss);
                         }
-                        hr[0][xx] = clip(r); hr[1][xx] = clip(gg); hr[2][xx] = clip(b);
-                    }
-                    cache.put(sy, hr);
                 }
-                int kv = ky[yy][t];
-                for (int ch = 0; ch < 3; ch++) { long[] a = acc[ch]; int[] src = hr[ch]; for (int xx = 0; xx < w; xx++) a[xx] += (long) src[xx] * kv; }
-            }
-            for (int xx = 0; xx < w; xx++)
-                out[yy * w + xx] = 0xff000000 | (clip(acc[0][xx]) << 16) | (clip(acc[1][xx]) << 8) | clip(acc[2][xx]);
+            return new Image(w, h, out);
         }
+
+        // border and jitter: plain rectangles (jittered ones may reach into the next cell;
+        // later cells are painted over earlier ones)
+        Random rnd = style == Settings.Style.JITTER ? new Random(7) : null;
+        int[] cx = new int[cellSize + 2], cy = new int[cellSize + 2];
+        for (int r = 0; r < rows; r++)
+            for (int k = 0; k < cols; k++) {
+                double m = (inset + (rnd == null ? 0 : amount * (2 * rnd.nextDouble() - 1))) * c;
+                int x0 = (int) (k * c + m), y0 = (int) (r * c + m), x1 = (int) ((k + 1) * c - m - 1), y1 = (int) ((r + 1) * c - m - 1);
+                if (x1 < x0 || y1 < y0) continue;
+                int col = g.color[r * cols + k];
+                int px0 = Math.max(0, x0 / ss), px1 = Math.min(w - 1, x1 / ss), py0 = Math.max(0, y0 / ss), py1 = Math.min(h - 1, y1 / ss);
+                for (int py = py0; py <= py1; py++) {
+                    int covY = Math.min(y1, py * ss + ss - 1) - Math.max(y0, py * ss) + 1;
+                    for (int px = px0; px <= px1; px++) {
+                        int covX = Math.min(x1, px * ss + ss - 1) - Math.max(x0, px * ss) + 1;
+                        int i = py * w + px;
+                        out[i] = over(out[i], col, covX * covY, ss * ss);
+                    }
+                }
+            }
         return new Image(w, h, out);
     }
 
-    private static final int PB = 22;
-    private static int clip(long v) { if (v >= (1L << PB << 8)) return 255; if (v <= 0) return 0; return (int) (v >> PB); }
-
-    private static int[][] coeffs(int inSize, int outSize, int[] bounds) {
-        // Same as Pil.coeffs with Lanczos (kept here so blocks() can stream rows).
-        double scale = (double) inSize / outSize, fs = Math.max(1.0, scale), support = 3.0 * fs;
-        int[][] kk = new int[outSize][];
-        for (int xx = 0; xx < outSize; xx++) {
-            double center = (xx + 0.5) * scale, ww = 0.0, ss = 1.0 / fs;
-            int xmin = Math.max(0, (int) (center - support + 0.5));
-            int xmax = Math.min(inSize, (int) (center + support + 0.5)) - xmin;
-            double[] k = new double[Math.max(0, xmax)];
-            for (int x = 0; x < xmax; x++) { k[x] = Pil.LANCZOS.apply((x + xmin - center + 0.5) * ss); ww += k[x]; }
-            int[] ki = new int[k.length];
-            for (int x = 0; x < xmax; x++) {
-                double v = ww != 0.0 ? k[x] / ww : k[x];
-                ki[x] = (int) (v < 0 ? -0.5 + v * (1 << PB) : 0.5 + v * (1 << PB));
-            }
-            kk[xx] = ki; bounds[2 * xx] = xmin; bounds[2 * xx + 1] = xmax;
-        }
-        return kk;
-    }
-
-    private static void superRow(Grid g, int sy, int c, int[] x0, int[] x1, int[] y0, int[] y1, boolean[] round, int[] line) {
-        java.util.Arrays.fill(line, BACKGROUND);
-        int W = g.cols * c, r = sy / c;
-        // Jittered squares can reach slightly into the next cell, so look at the rows around
-        // this one too; later cells are drawn over earlier ones, as in Pillow.
-        for (int rr = Math.max(0, r - 1); rr <= Math.min(g.rows - 1, r + 1); rr++) {
-            for (int k = 0; k < g.cols; k++) {
-                int i = rr * g.cols + k;
-                if (sy < y0[i] || sy > y1[i]) continue;
-                int col = g.color[i], cr = (col >> 16) & 255, cg = (col >> 8) & 255, cb = col & 255;
-                int from = Math.max(0, x0[i]), to = Math.min(W - 1, x1[i]);
-                for (int x = from; x <= to; x++) {
-                    if (round != null && !round[(sy - rr * c) * c + (x - k * c)]) continue;
-                    line[x * 3] = cr; line[x * 3 + 1] = cg; line[x * 3 + 2] = cb;
-                }
-            }
-        }
+    /** colour c laid over pixel p with coverage a out of full. */
+    private static int over(int p, int c, int a, int full) {
+        if (a >= full) return c | 0xff000000;
+        if (a <= 0) return p;
+        int b = full - a;
+        int r = (((c >> 16) & 255) * a + ((p >> 16) & 255) * b + full / 2) / full;
+        int gg = (((c >> 8) & 255) * a + ((p >> 8) & 255) * b + full / 2) / full;
+        int bl = ((c & 255) * a + (p & 255) * b + full / 2) / full;
+        return 0xff000000 | r << 16 | gg << 8 | bl;
     }
 
     /**

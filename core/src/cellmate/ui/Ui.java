@@ -598,7 +598,7 @@ public final class Ui {
                 Grid grid = Engine.grid(p, set);
                 int onScreen = (int) Math.ceil(Math.min(bw / (double) grid.cols, bh / (double) grid.rows));
                 int cell = Math.max(2, Math.min(set.cellSizeFor(grid.cols, grid.rows), onScreen));
-                Engine.Image shown = Engine.fit(Engine.drawPreview(grid, style, cell, set), bw, bh);
+                Engine.Image shown = Engine.fit(Engine.draw(grid, style, cell, set), bw, bh);
                 Object img = host.makeImage(shown.argb, shown.width, shown.height);
                 host.runOnUi(() -> {
                     if (seq != previewSeq.get()) return;
@@ -645,35 +645,53 @@ public final class Ui {
         started = System.currentTimeMillis();
         screen = Screen.RUNNING;
         message = "";
+        // several pictures at once, one per spare processor core (each is small: the photo,
+        // its grid and one finished picture at a time)
+        final int threads = Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() - 1));
         daemon(() -> {
-            for (int i = 0; i < list.size() && !cancel.get(); i++) {
-                String rel = list.get(i);
-                current = rel;
-                List<Style> todo = new ArrayList<>();
-                for (Style st : chosen) {
-                    String target = Plan.styleFolder(name, folder, st) + "/" + outs.get(i);
-                    if (!rep && host.exists(out, target)) { skipped++; done++; } else todo.add(st);
-                }
-                if (!todo.isEmpty()) {
-                    try {
-                        Picture p = host.decode(in, folder, rel);
-                        Grid g = Engine.grid(p, set);
-                        for (Style st : todo) {
-                            if (cancel.get()) break;
-                            host.writePng(out, Plan.styleFolder(name, folder, st) + "/" + outs.get(i), Engine.draw(g, st, set.cellSizeFor(g.cols, g.rows), set));
-                            written++; done++;
-                            host.repaint();
-                        }
-                    } catch (Throwable e) {
-                        int left = todo.size();
-                        failed += left; done += left;
-                        if (firstError.isEmpty()) firstError = rel + ": " + (e.getMessage() == null ? e.toString() : e.getMessage());
-                    }
-                }
-                host.repaint();
+            java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(threads, r -> {
+                Thread t = new Thread(r, "convert"); t.setDaemon(true); return t;
+            });
+            for (int n = 0; n < list.size(); n++) {
+                final int i = n;
+                pool.execute(() -> convertOne(list.get(i), outs.get(i), chosen, set, in, out, folder, rep, name));
             }
+            pool.shutdown();
+            try { pool.awaitTermination(Long.MAX_VALUE, java.util.concurrent.TimeUnit.MILLISECONDS); } catch (InterruptedException ignored) { }
             host.runOnUi(() -> { screen = Screen.DONE; host.repaint(); });
         }, "batch").start();
+    }
+
+    /** One picture in every chosen style (styles already saved are skipped unless replacing). */
+    private void convertOne(String rel, String outName, List<Style> chosen, Settings set, Object in, Object out,
+                            boolean folder, boolean rep, String name) {
+        if (cancel.get()) return;
+        current = rel;
+        List<Style> todo = new ArrayList<>();
+        for (Style st : chosen) {
+            if (!rep && host.exists(out, Plan.styleFolder(name, folder, st) + "/" + outName)) count(0, 1, 0);
+            else todo.add(st);
+        }
+        if (todo.isEmpty()) { host.repaint(); return; }
+        try {
+            Picture p = host.decode(in, folder, rel);
+            Grid g = Engine.grid(p, set);
+            for (Style st : todo) {
+                if (cancel.get()) return;
+                host.writePng(out, Plan.styleFolder(name, folder, st) + "/" + outName, Engine.draw(g, st, set.cellSizeFor(g.cols, g.rows), set));
+                count(1, 0, 0);
+                host.repaint();
+            }
+        } catch (Throwable e) {
+            count(0, 0, todo.size());
+            synchronized (this) { if (firstError.isEmpty()) firstError = rel + ": " + (e.getMessage() == null ? e.toString() : e.getMessage()); }
+        }
+        host.repaint();
+    }
+
+    /** Progress, from any of the converting threads. */
+    private synchronized void count(int wrote, int skip, int fail) {
+        written += wrote; skipped += skip; failed += fail; done += wrote + skip + fail;
     }
 
     // ================================================================== drawing
